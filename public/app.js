@@ -100,6 +100,14 @@ $('#protocolSelect').addEventListener('change', (e) => {
   $('#insecureTLSField').style.display = e.target.value === 'http' ? 'none' : 'flex';
 });
 
+// 샘플 인덱스를 만든 클러스터 = 보통 CCR의 Leader 클러스터와 같으므로, 아직 서로 선택 안 된 쪽을 자동으로 맞춰줍니다.
+$('#sampleIndexCluster').addEventListener('change', (e) => {
+  if (!$('#leaderSelect').value && e.target.value) $('#leaderSelect').value = e.target.value;
+});
+$('#leaderSelect').addEventListener('change', (e) => {
+  if (!$('#sampleIndexCluster').value && e.target.value) $('#sampleIndexCluster').value = e.target.value;
+});
+
 $('#clusterForm').addEventListener('submit', async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -298,11 +306,26 @@ $('#btnFailbackUnfollow').addEventListener('click', async () => {
 function appendLog(title, data) {
   const box = $('#logOutput');
   box.textContent = `[${new Date().toLocaleTimeString()}] ${title}\n${pretty(data)}\n\n` + box.textContent;
+  box.scrollTop = 0; // 새 로그는 맨 위에 쌓이므로, 발생 시 스크롤도 맨 위로 이동
 }
 
 $('#btnRefreshLog').addEventListener('click', async () => {
   const logs = await api('GET', '/api/logs');
   $('#logOutput').textContent = pretty(logs);
+  $('#logOutput').scrollTop = 0;
+});
+
+$('#btnCopyLog').addEventListener('click', async () => {
+  const text = $('#logOutput').textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = $('#btnCopyLog');
+    const original = btn.textContent;
+    btn.textContent = '복사됨!';
+    setTimeout(() => { btn.textContent = original; }, 1200);
+  } catch {
+    alert('클립보드 복사에 실패했습니다. 브라우저 권한을 확인해주세요.');
+  }
 });
 
 // ---------- 우측 아키텍처 다이어그램 ----------
@@ -316,8 +339,13 @@ function findLink(primaryId, drId) {
   );
 }
 
-function roleBadge(clusterId, link) {
-  if (!link) return { text: '역할 미지정', cls: 'arch-role-unknown' };
+function roleBadge(clusterId, link, cluster) {
+  if (!link) {
+    // 아직 CCR 연동 전이면 등록 시 지정한 역할을 그대로 보여줍니다 (실제 CCR 상태가 아니라 "설정값"이라는 의미로 대기중 표기)
+    if (cluster?.role === 'primary') return { text: '주센터 (대기 중)', cls: 'arch-role-unknown' };
+    if (cluster?.role === 'dr') return { text: 'DR센터 (대기 중)', cls: 'arch-role-unknown' };
+    return { text: '역할 미지정', cls: 'arch-role-unknown' };
+  }
   if (link.status === 'linked') {
     if (link.leaderClusterId === clusterId) return { text: '리더 (Leader)', cls: 'arch-role-leader' };
     return { text: '팔로워 (Follower)', cls: 'arch-role-follower' };
@@ -355,8 +383,8 @@ function renderArchDiagram() {
   currentDr = clusters.find((c) => c.role === 'dr') || null;
   const link = currentPrimary && currentDr ? findLink(currentPrimary.id, currentDr.id) : null;
 
-  const primaryBadge = currentPrimary ? roleBadge(currentPrimary.id, link) : { text: '', cls: '' };
-  const drBadge = currentDr ? roleBadge(currentDr.id, link) : { text: '', cls: '' };
+  const primaryBadge = currentPrimary ? roleBadge(currentPrimary.id, link, currentPrimary) : { text: '', cls: '' };
+  const drBadge = currentDr ? roleBadge(currentDr.id, link, currentDr) : { text: '', cls: '' };
 
   let arrowClass = 'arch-arrow-none';
   let arrowLabel = '연동 안 됨';

@@ -61,7 +61,15 @@ async function call(cluster, method, path, data, context = {}) {
   const startedAt = Date.now();
 
   try {
-    const res = await client.request({ method, url: path, data });
+    const requestConfig = { method, url: path, data };
+    // data가 이미 완성된 문자열(예: _bulk의 NDJSON)인 경우, axios 기본 transformRequest가
+    // Content-Type: application/json을 보고 JSON.stringify를 또 적용해버려서 개행이
+    // \n 문자열로 escape되는 문제가 있었음. 문자열 바디는 그대로(raw) 전송하도록 강제.
+    if (typeof data === 'string') {
+      requestConfig.headers = { 'Content-Type': 'application/x-ndjson' };
+      requestConfig.transformRequest = [(d) => d];
+    }
+    const res = await client.request(requestConfig);
     const durationMs = Date.now() - startedAt;
     const ok = res.status >= 200 && res.status < 300;
     emitTraffic({ phase: 'end', ok, status: res.status, durationMs, ...base });
