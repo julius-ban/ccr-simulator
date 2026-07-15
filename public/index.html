@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<title>Elasticsearch CCR Failover/Failback 자동화</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<header>
+  <h1>ES CCR Failover / Failback 자동화 콘솔</h1>
+  <p class="subtitle">주센터 · DR센터 클러스터 등록부터 CCR 연동, Failover/Failback 실행까지</p>
+</header>
+
+<div class="layout">
+<main class="left-col">
+
+  <!-- 1. 클러스터 등록 -->
+  <section class="card">
+    <h2>1. 클러스터 등록</h2>
+    <form id="clusterForm" class="grid-form">
+      <label>이름 <input name="name" placeholder="예: cluster-a" required /></label>
+      <label>역할
+        <select name="role" required>
+          <option value="primary">주센터 (Primary)</option>
+          <option value="dr">DR센터 (DR)</option>
+        </select>
+      </label>
+      <label>Host <input name="host" placeholder="172.21.133.178" required /></label>
+      <label>REST 포트 <input name="restPort" value="9200" required /></label>
+      <label>Proxy 포트(CCR) <input name="proxyPort" value="9443" /></label>
+      <label>인증 방식
+        <select name="authType" id="authType">
+          <option value="basic">ID/Password</option>
+          <option value="apikey">API Key</option>
+        </select>
+      </label>
+      <label id="userField">Username <input name="username" value="elastic" /></label>
+      <label id="pwField">Password <input name="password" type="password" /></label>
+      <label id="apiKeyField" style="display:none">API Key <input name="apiKey" /></label>
+      <label>Kibana 주소 (선택) <input name="kibanaUrl" placeholder="https://172.21.133.178:5601" /></label>
+      <label class="checkbox"><input type="checkbox" name="insecureTLS" checked /> TLS 인증서 검증 건너뛰기 (self-signed)</label>
+      <button type="submit">클러스터 등록</button>
+    </form>
+    <div id="clusterList" class="cluster-list"></div>
+  </section>
+
+  <!-- 2. CCR 연동 -->
+  <section class="card">
+    <h2>2. CCR 연동 (정방향)</h2>
+    <div class="grid-form">
+      <label>Leader 클러스터(주센터) <select id="leaderSelect"></select></label>
+      <label>Follower 클러스터(DR센터) <select id="followerSelect"></select></label>
+      <label>Remote alias <input id="remoteAlias" value="cluster_a" /></label>
+      <label>Leader 인덱스 <input id="leaderIndex" value="rag-vectors" /></label>
+      <label>Follower 인덱스 <input id="followerIndex" value="rag-vectors-follower" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnGenKey">① API Key 발급</button>
+      <button id="btnShowKeystore" disabled>② keystore 명령어 보기</button>
+      <button id="btnRegisterRemote" disabled>③ Remote Cluster 등록</button>
+      <button id="btnFollow" disabled>④ Follower Index 생성</button>
+      <button class="info-btn" data-info="ccrSetup" type="button">실제 어떤 동작이 수행되나요?</button>
+    </div>
+    <div class="action-info" data-info-panel="ccrSetup" style="display:none"></div>
+    <div id="keystoreBox" class="code-box" style="display:none"></div>
+  </section>
+
+  <!-- 3. 샘플 벡터 인덱스 -->
+  <section class="card">
+    <h2>3. 샘플 벡터 인덱스 생성 (rag-vectors)</h2>
+    <p class="hint">기본값은 제공해주신 rag-vectors 스펙(5샤드, HNSW, content_analyzer 등)을 그대로 반영했습니다.</p>
+    <div class="grid-form">
+      <label>대상 클러스터 <select id="sampleIndexCluster"></select></label>
+      <label>인덱스 이름 <input id="sampleIndexName" value="rag-vectors" /></label>
+      <label>차원(dims) <input id="sampleDims" value="768" /></label>
+      <label>유사도 함수
+        <select id="sampleSimilarity">
+          <option value="cosine">cosine</option>
+          <option value="dot_product">dot_product</option>
+          <option value="l2_norm">l2_norm</option>
+        </select>
+      </label>
+      <label>시드 문서 수 <input id="sampleSeedDocs" value="200" /></label>
+      <label>배치 크기 <input id="sampleBatchSize" value="200" /></label>
+      <label>doc_id offset <input id="sampleOffset" value="0" /></label>
+    </div>
+    <details>
+      <summary>고급: settings/mappings JSON 직접 입력 (비워두면 기본 rag-vectors 스펙 사용)</summary>
+      <textarea id="sampleCustomBody" rows="6" placeholder='{"settings": {...}, "mappings": {...}} 형태로 붙여넣으면 이 내용 그대로 사용합니다.'></textarea>
+    </details>
+    <div class="step-buttons">
+      <button id="btnCreateSampleIndex">인덱스 생성 + 시드 삽입</button>
+      <button class="info-btn" data-info="sampleIndex" type="button">실제 어떤 동작이 수행되나요?</button>
+    </div>
+    <div class="action-info" data-info-panel="sampleIndex" style="display:none"></div>
+  </section>
+
+  <!-- 4. 모니터링 -->
+  <section class="card">
+    <h2>4. CCR 복제 모니터링</h2>
+    <div class="grid-form">
+      <label>대상 클러스터(follower) <select id="monitorCluster"></select></label>
+      <label>인덱스 <input id="monitorIndex" value="rag-vectors-follower" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnStartMonitor">모니터링 시작 (5초 간격)</button>
+      <button id="btnStopMonitor">중지</button>
+      <button class="info-btn" data-info="monitor" type="button">실제 어떤 동작이 수행되나요?</button>
+    </div>
+    <div class="action-info" data-info-panel="monitor" style="display:none"></div>
+    <pre id="monitorOutput" class="code-box"></pre>
+  </section>
+
+  <!-- 5. Failover / Failback -->
+  <section class="card">
+    <h2>
+      5. Failover / Failback 실행
+      <span class="tooltip-icon" data-tooltip="Failover: 주센터에 장애가 생겼을 때, DR센터를 독립적으로 쓰기 가능한 상태로 전환해서 서비스를 계속 이어가는 것">ⓘ Failover란?</span>
+      <span class="tooltip-icon" data-tooltip="Failback: 장애가 복구된 뒤, DR센터에 쌓인 데이터를 다시 주센터로 되돌리고 원래처럼 주센터 중심 운영으로 복귀하는 것">ⓘ Failback이란?</span>
+    </h2>
+    <div class="grid-form">
+      <label>DR(follower) 클러스터 <select id="drCluster"></select></label>
+      <label>Follower 인덱스 <input id="drIndex" value="rag-vectors-follower" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnFailover" class="danger">Failover 실행 (pause→close→unfollow→open)</button>
+      <button class="info-btn" data-info="failover" type="button">실제 어떤 동작이 수행되나요?</button>
+    </div>
+    <div class="action-info" data-info-panel="failover" style="display:none"></div>
+
+    <hr />
+    <div class="grid-form">
+      <label>원 Primary(이제 follower가 될) 클러스터 <select id="failbackFollowerSelect"></select></label>
+      <label>원 Primary 인덱스 <input id="failbackFollowerIndex" value="rag-vectors" /></label>
+      <label>Remote alias(역방향) <input id="failbackAlias" value="cluster_b" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnPrepareFailback">① 원 Primary 인덱스 삭제(재수신 준비)</button>
+      <button id="btnFailbackGenKey">② 역방향 API Key 발급</button>
+      <button id="btnFailbackShowKeystore" disabled>③ keystore 명령어 보기</button>
+      <button id="btnFailbackRegisterRemote" disabled>④ 역방향 Remote 등록</button>
+      <button id="btnFailbackFollow" disabled>⑤ 역방향 Follower 생성</button>
+      <button id="btnFailbackUnfollow">⑥ 역방향 해제(동기화 완료 후)</button>
+      <button class="info-btn" data-info="failback" type="button">실제 어떤 동작이 수행되나요?</button>
+    </div>
+    <div class="action-info" data-info-panel="failback" style="display:none"></div>
+  </section>
+
+  <!-- 6. 실행 로그 -->
+  <section class="card">
+    <h2>실행 로그</h2>
+    <button id="btnRefreshLog">로그 새로고침</button>
+    <pre id="logOutput" class="code-box"></pre>
+  </section>
+
+</main>
+
+<aside class="right-col">
+  <div class="card sticky-card">
+    <h2>아키텍처 상태 <span class="live-dot" id="liveDot"></span></h2>
+    <p class="hint">클러스터 연결 상태, 리더/팔로워 역할, CCR 연동 방향이 여기에 실시간으로 반영됩니다.</p>
+    <div id="archContainer"></div>
+    <div class="arch-legend">
+      <div><span class="dot dot-green"></span> 정상 연결</div>
+      <div><span class="dot dot-red"></span> 연결 실패/장애</div>
+      <div><span class="dot dot-gray"></span> 아직 테스트 안 함</div>
+      <div><span class="arrow-sample arrow-linked"></span> CCR 복제 중</div>
+      <div><span class="arrow-sample arrow-broken"></span> 연결 끊김 / 독립 인덱스</div>
+    </div>
+  </div>
+  <div class="card sticky-card">
+    <h2>실시간 이벤트</h2>
+    <div id="eventFeed" class="event-feed"></div>
+  </div>
+</aside>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

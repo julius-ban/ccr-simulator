@@ -1,0 +1,43 @@
+{
+  "clusters": [
+    {
+      "id": "8275fb72-90ac-468d-9118-eaa7e56d24f9",
+      "name": "main",
+      "role": "primary",
+      "host": "172.21.133.178",
+      "restPort": 19200,
+      "proxyPort": 9443,
+      "authType": "basic",
+      "username": "elastic",
+      "encPassword": "Uun5/LaVxMjpAt44A+3hBSIkd2Y2NAj7tKc01CrrJIWPlEs=",
+      "encApiKey": null,
+      "insecureTLS": true,
+      "kibanaUrl": "http://172.21.133.181:15601",
+      "lastHealthOk": false,
+      "lastHealthAt": "2026-07-15T05:17:24.817Z",
+      "createdAt": "2026-07-15T05:16:51.021Z"
+    }
+  ],
+  "actionLog": [
+    {
+      "action": "register_cluster",
+      "clusterId": "8275fb72-90ac-468d-9118-eaa7e56d24f9",
+      "detail": {
+        "name": "main",
+        "role": "primary",
+        "host": "172.21.133.178"
+      },
+      "timestamp": "2026-07-15T05:16:51.022Z"
+    },
+    {
+      "action": "test_cluster",
+      "clusterId": "8275fb72-90ac-468d-9118-eaa7e56d24f9",
+      "detail": {
+        "healthOk": false,
+        "licenseOk": false
+      },
+      "timestamp": "2026-07-15T05:17:24.818Z"
+    }
+  ],
+  "ccrLinks": []
+}

@@ -1,0 +1,19 @@
+{
+  "name": "ccr-automation-ui",
+  "version": "1.0.0",
+  "description": "Elasticsearch CCR Failover/Failback 자동화 웹 UI",
+  "main": "server/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "lowdb": "^1.0.0",
+    "uuid": "^9.0.1"
+  }
+}
