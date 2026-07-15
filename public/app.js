@@ -297,68 +297,6 @@ $('#btnRefreshLog').addEventListener('click', async () => {
   $('#logOutput').textContent = pretty(logs);
 });
 
-// ---------- "실제 어떤 동작이 수행되나요?" 설명 패널 ----------
-const ACTION_INFO = {
-  ccrSetup: {
-    title: 'CCR 연동 단계에서 실제로 일어나는 일',
-    items: [
-      { m: 'POST', p: '/_security/cross_cluster/api_key', purpose: '주센터에 "DR센터가 이 인덱스를 검색/복제할 수 있는" 권한만 가진 전용 키를 발급합니다. 이 키가 없으면 DR센터는 주센터에 접근할 수 없습니다.' },
-      { m: '(수동)', p: 'elasticsearch-keystore add', purpose: '발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 못 하고 직접 실행해야 합니다.' },
-      { m: 'PUT', p: '/_cluster/settings', purpose: 'DR센터에게 "주센터가 어디 있는지" 주소를 알려줍니다 (원격 클러스터 등록).' },
-      { m: 'PUT', p: '/{인덱스}/_ccr/follow', purpose: '실제 복제를 시작합니다. 이 순간부터 주센터의 데이터가 DR센터로 실시간 미러링됩니다.' },
-    ],
-  },
-  sampleIndex: {
-    title: '샘플 인덱스 생성에서 실제로 일어나는 일',
-    items: [
-      { m: 'PUT', p: '/{인덱스}', purpose: '벡터(임베딩) 필드를 포함한 인덱스를 생성합니다. 매핑/설정은 주신 rag-vectors 스펙을 그대로 사용합니다.' },
-      { m: 'POST', p: '/_bulk', purpose: '테스트용 문서를 배치 단위로 대량 삽입합니다. 한 번에 다 보내지 않고 배치별로 나눠 보내서 서버 부하를 조절합니다.' },
-    ],
-  },
-  monitor: {
-    title: '모니터링에서 실제로 일어나는 일',
-    items: [
-      { m: 'GET', p: '/{인덱스}/_ccr/stats', purpose: '복제 지연(lag), 지금까지 복제된 문서 수, 에러 여부 등을 5초 간격으로 조회합니다. 실제 데이터가 오가지는 않고 상태만 확인합니다.' },
-    ],
-  },
-  failover: {
-    title: 'Failover 버튼을 누르면 순서대로 실행되는 것',
-    items: [
-      { m: 'POST', p: '/{인덱스}/_ccr/pause_follow', purpose: '복제를 일시정지합니다 (더는 주센터 데이터를 받지 않음).' },
-      { m: 'POST', p: '/{인덱스}/_close', purpose: '인덱스를 잠깐 닫아서 설정을 안전하게 바꿀 수 있는 상태로 만듭니다.' },
-      { m: 'POST', p: '/{인덱스}/_ccr/unfollow', purpose: '팔로워 관계를 완전히 해제합니다. 이제 이 인덱스는 독립적인, 쓰기가 가능한 일반 인덱스가 됩니다.' },
-      { m: 'POST', p: '/{인덱스}/_open', purpose: '인덱스를 다시 열어서 애플리케이션이 바로 쓰기/읽기를 할 수 있게 합니다.' },
-    ],
-  },
-  failback: {
-    title: 'Failback 마법사에서 실제로 일어나는 일',
-    items: [
-      { m: 'DELETE', p: '/{인덱스}', purpose: '원래 주센터에 남아있던 예전 인덱스를 지웁니다. DR센터로부터 다시 데이터를 받을 자리를 비우는 것입니다.' },
-      { m: 'POST', p: '/_security/cross_cluster/api_key', purpose: '이번엔 반대로, 주센터가 DR센터 데이터를 가져올 수 있는 키를 DR센터에서 발급합니다.' },
-      { m: 'PUT', p: '/_cluster/settings + /_ccr/follow', purpose: '주센터를 DR센터의 팔로워로 등록해서, Failover 중 DR에 쌓인 데이터를 다시 주센터로 복제해옵니다 (역방향 CCR).' },
-      { m: 'pause_follow → close → unfollow → open', p: '(⑥ 버튼)', purpose: '문서 수가 양쪽 일치하는 걸 확인한 뒤, 역방향 연결을 끊고 주센터를 다시 독립적인 쓰기 가능 상태로 되돌립니다. 이후 정방향 CCR을 다시 구성하면 원래 운영 형태로 복귀합니다.' },
-    ],
-  },
-};
-
-document.querySelectorAll('.info-btn').forEach((btn) => {
-  btn.addEventListener('click', () => {
-    const key = btn.dataset.info;
-    const panel = document.querySelector(`[data-info-panel="${key}"]`);
-    if (!panel) return;
-    const isHidden = panel.style.display === 'none' || !panel.style.display;
-    if (isHidden) {
-      const info = ACTION_INFO[key];
-      panel.innerHTML = `<h4>${info.title}</h4><ul>${info.items.map((it) => `
-        <li><code>${it.m} ${it.p}</code><br/><span class="purpose">${it.purpose}</span></li>
-      `).join('')}</ul>`;
-      panel.style.display = 'block';
-    } else {
-      panel.style.display = 'none';
-    }
-  });
-});
-
 // ---------- 우측 아키텍처 다이어그램 ----------
 let currentPrimary = null;
 let currentDr = null;

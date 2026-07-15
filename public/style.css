@@ -87,7 +87,6 @@ button {
 }
 button:disabled { background: #9ca3af; cursor: not-allowed; }
 button.danger { background: var(--danger); }
-button.info-btn { background: #f1f5f9; color: #334155; border: 1px solid var(--border); }
 
 .step-buttons {
   display: flex;
@@ -155,50 +154,14 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .dot-red { background: #ef4444; }
 .dot-gray { background: #cbd5e1; }
 
-/* ---- 툴팁 (Failover/Failback 등 용어 설명) ---- */
-.tooltip-icon {
-  font-size: 11px;
-  font-weight: 500;
-  color: #475569;
+/* ---- Failover/Failback 용어 설명 (항상 노출) ---- */
+.term-explain {
   background: #eef2f7;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 2px 8px;
-  cursor: help;
-  position: relative;
-}
-.tooltip-icon:hover::after {
-  content: attr(data-tooltip);
-  position: absolute;
-  bottom: 125%;
-  left: 0;
-  background: #111827;
-  color: #f1f5f9;
-  padding: 8px 10px;
   border-radius: 6px;
-  font-size: 11.5px;
-  font-weight: 400;
-  width: 260px;
-  line-height: 1.5;
-  white-space: normal;
-  z-index: 30;
-  box-shadow: 0 4px 14px rgba(0,0,0,0.25);
+  padding: 10px 12px;
+  line-height: 1.6;
 }
-
-/* ---- "실제 어떤 동작이 수행되나요?" 설명 패널 ---- */
-.action-info {
-  margin-top: 10px;
-  background: #f8fafc;
-  border: 1px dashed #cbd5e1;
-  border-radius: 6px;
-  padding: 10px 14px;
-  font-size: 12px;
-}
-.action-info h4 { margin: 0 0 6px; font-size: 12.5px; color: #1e293b; }
-.action-info ul { margin: 0; padding-left: 18px; }
-.action-info li { margin-bottom: 6px; }
-.action-info code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; }
-.action-info .purpose { color: var(--muted); }
+.term-explain strong { color: #1e293b; }
 
 /* ---- 우측 아키텍처 다이어그램 ---- */
 .arch-diagram { width: 100%; height: auto; }
