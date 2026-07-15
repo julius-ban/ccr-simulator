@@ -163,6 +163,19 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 }
 .term-explain strong { color: #1e293b; }
 
+/* ---- 각 단계에서 실제 나가는 API와 목적 (항상 노출) ---- */
+.action-note {
+  margin-top: 10px;
+  background: #f8fafc;
+  border: 1px dashed #cbd5e1;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.action-note ul { margin: 0; padding-left: 18px; }
+.action-note li { margin-bottom: 6px; color: var(--muted); }
+.action-note code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; color: #1e293b; }
+
 /* ---- 우측 아키텍처 다이어그램 ---- */
 .arch-diagram { width: 100%; height: auto; }
 .arch-box-primary rect { fill: #eff6ff; stroke: #3b82f6; }

@@ -5,10 +5,11 @@ const { emitTraffic } = require('./eventBus');
 
 /**
  * 등록된 클러스터 레코드로부터 axios 인스턴스를 생성합니다.
- * cluster: { host, restPort, authType('basic'|'apikey'), username, encPassword, encApiKey, insecureTLS }
+ * cluster: { host, restPort, protocol('http'|'https'), authType('basic'|'apikey'), username, encPassword, encApiKey, insecureTLS }
  */
 function buildClient(cluster) {
-  const baseURL = `https://${cluster.host}:${cluster.restPort}`;
+  const protocol = cluster.protocol === 'http' ? 'http' : 'https'; // 기본값 https
+  const baseURL = `${protocol}://${cluster.host}:${cluster.restPort}`;
 
   const headers = { 'Content-Type': 'application/json' };
   let auth;

@@ -60,7 +60,7 @@ function renderClusterList() {
     div.innerHTML = `
       <span class="role-${c.role}">${c.role === 'primary' ? '주센터' : 'DR센터'}</span>
       <strong>${c.name}</strong>
-      <span>${c.host}:${c.restPort} (proxy ${c.proxyPort})</span>
+      <span>${c.host}:${c.restPort} (proxy ${c.proxyPort}) · ${(c.protocol || 'https').toUpperCase()}</span>
       <span>${healthDotHtml(c)}</span>
       <div class="chip-actions">
         <button data-test="${c.id}">연결 테스트</button>
@@ -81,6 +81,9 @@ function renderClusterList() {
     btn.addEventListener('click', async () => {
       await api('DELETE', `/api/clusters/${btn.dataset.del}`);
       await loadClusters();
+      // 아키텍처 다이어그램(우측 패널)도 즉시 반영 - SSE 도착을 기다리지 않고 바로 상태 재조회
+      const state = await api('GET', '/api/state');
+      applyState(state);
     });
   });
 }
@@ -90,6 +93,11 @@ $('#authType').addEventListener('change', (e) => {
   $('#userField').style.display = isApiKey ? 'none' : 'flex';
   $('#pwField').style.display = isApiKey ? 'none' : 'flex';
   $('#apiKeyField').style.display = isApiKey ? 'flex' : 'none';
+});
+
+$('#protocolSelect').addEventListener('change', (e) => {
+  // http는 TLS 자체가 없으니 인증서 검증 옵션이 의미가 없어서 숨김
+  $('#insecureTLSField').style.display = e.target.value === 'http' ? 'none' : 'flex';
 });
 
 $('#clusterForm').addEventListener('submit', async (e) => {
@@ -336,7 +344,7 @@ function boxSvg(y, cluster, badge, boxClass) {
       <rect x="20" y="${y}" width="280" height="70" rx="6" stroke-width="1.6"/>
       <circle cx="34" cy="${y + 16}" r="5" fill="${health}"/>
       <text x="46" y="${y + 20}" font-size="12.5" font-weight="700" fill="#1f2937">${cluster.name}</text>
-      <text x="46" y="${y + 36}" font-size="10.5" fill="#475569">${cluster.host}:${cluster.restPort}</text>
+      <text x="46" y="${y + 36}" font-size="10.5" fill="#475569">${(cluster.protocol || 'https')}://${cluster.host}:${cluster.restPort}</text>
       <text x="46" y="${y + 58}" class="arch-role-badge ${badge.cls}">${badge.text}</text>
       ${kibana}
     </g>`;
@@ -383,10 +391,9 @@ function renderArchDiagram() {
 }
 
 function applyState(state) {
-  if (state.clusters) clusters = state.clusters.length ? state.clusters : clusters;
-  if (state.links) ccrLinks = state.links;
-  // 클러스터 헬스/키바나 정보가 여기 스냅샷에 더 최신일 수 있으므로 병합
-  if (state.clusters && state.clusters.length) clusters = state.clusters;
+  // 서버가 준 스냅샷을 그대로 신뢰합니다 (클러스터가 0개로 줄어든 경우도 정확히 반영되어야 함)
+  if (Array.isArray(state.clusters)) clusters = state.clusters;
+  if (Array.isArray(state.links)) ccrLinks = state.links;
   renderArchDiagram();
   renderClusterList();
 }

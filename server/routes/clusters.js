@@ -22,7 +22,7 @@ router.get('/', (req, res) => {
 // 등록 (주센터/DR센터 공통 - role 필드로 구분: 'primary' | 'dr')
 router.post('/', (req, res) => {
   const {
-    name, role, host, restPort, proxyPort,
+    name, role, host, restPort, proxyPort, protocol,
     authType, username, password, apiKey, insecureTLS, kibanaUrl,
   } = req.body;
 
@@ -40,6 +40,7 @@ router.post('/', (req, res) => {
     host,
     restPort: Number(restPort),
     proxyPort: Number(proxyPort) || 9443,
+    protocol: protocol === 'http' ? 'http' : 'https',
     authType: authType === 'apikey' ? 'apikey' : 'basic',
     username: authType === 'apikey' ? null : username,
     encPassword: authType === 'apikey' ? null : encrypt(password),
