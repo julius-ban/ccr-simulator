@@ -124,12 +124,13 @@ let ccrState = {};
 
 $('#btnGenKey').addEventListener('click', async () => {
   const leaderClusterId = $('#leaderSelect').value;
+  const followerClusterId = $('#followerSelect').value;
   const remoteAlias = $('#remoteAlias').value;
   const leaderIndex = $('#leaderIndex').value;
   if (!leaderClusterId) return alert('Leader 클러스터를 선택하세요.');
 
   const { result, keystoreCommand } = await api('POST', '/api/ccr/generate-api-key', {
-    leaderClusterId, remoteAlias, leaderIndex,
+    leaderClusterId, remoteAlias, leaderIndex, followerClusterId,
   });
   appendLog('① API Key 발급', result);
   if (result.ok) {
@@ -147,12 +148,28 @@ $('#btnShowKeystore').addEventListener('click', () => {
   $('#btnRegisterRemote').disabled = false;
 });
 
+function renderDiag(elId, diag, portProbe) {
+  const box = $(elId);
+  if (!diag) { box.style.display = 'none'; return; }
+  box.className = `diag-box diag-${diag.level}`;
+  const probeLine = portProbe
+    ? `<div class="diag-sub">포트 TLS 응답: ${portProbe.reachable ? '✅ 정상' : `❌ ${portProbe.error || '응답 없음'}`}</div>`
+    : '';
+  box.innerHTML = `<div class="diag-msg">${diag.level === 'ok' ? '✅' : diag.level === 'warning' ? '⚠️' : '❌'} ${diag.message}</div>${probeLine}`;
+  box.style.display = 'block';
+}
+
 $('#btnRegisterRemote').addEventListener('click', async () => {
   const followerClusterId = $('#followerSelect').value;
   const leaderClusterId = $('#leaderSelect').value;
   const remoteAlias = $('#remoteAlias').value;
   const leader = clusters.find((c) => c.id === leaderClusterId);
   if (!followerClusterId || !leader) return alert('Leader/Follower 클러스터를 확인하세요.');
+
+  const btn = $('#btnRegisterRemote');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '확인 중... (포트/연결 진단, 최대 10초)';
 
   const result = await api('POST', '/api/ccr/register-remote', {
     followerClusterId,
@@ -162,6 +179,10 @@ $('#btnRegisterRemote').addEventListener('click', async () => {
     serverName: leader.host,
   });
   appendLog('③ Remote Cluster 등록', result);
+  renderDiag('#registerRemoteDiag', result.diagnosis, result.portProbe);
+
+  btn.disabled = false;
+  btn.textContent = originalText;
   if (result.settingsResult?.ok) {
     $('#btnFollow').disabled = false;
   }
@@ -239,12 +260,13 @@ let failbackState = {};
 
 $('#btnFailbackGenKey').addEventListener('click', async () => {
   const drClusterId = $('#drCluster').value; // 이제 leader 역할
+  const followerClusterId = $('#failbackFollowerSelect').value; // 원 Primary, 이제 follower 역할
   const remoteAlias = $('#failbackAlias').value;
   const drIndex = $('#drIndex').value;
   if (!drClusterId) return alert('DR 클러스터(이제 leader)를 선택하세요.');
 
   const { result, keystoreCommand } = await api('POST', '/api/ccr/generate-api-key', {
-    leaderClusterId: drClusterId, remoteAlias, leaderIndex: drIndex,
+    leaderClusterId: drClusterId, remoteAlias, leaderIndex: drIndex, followerClusterId,
   });
   appendLog('② 역방향 API Key 발급', result);
   if (result.ok) {
@@ -265,6 +287,11 @@ $('#btnFailbackRegisterRemote').addEventListener('click', async () => {
   const dr = clusters.find((c) => c.id === drClusterId);
   if (!followerClusterId || !dr) return alert('클러스터 선택을 확인하세요.');
 
+  const btn = $('#btnFailbackRegisterRemote');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '확인 중... (포트/연결 진단, 최대 10초)';
+
   const result = await api('POST', '/api/ccr/register-remote', {
     followerClusterId,
     remoteAlias,
@@ -273,6 +300,10 @@ $('#btnFailbackRegisterRemote').addEventListener('click', async () => {
     serverName: dr.host,
   });
   appendLog('④ 역방향 Remote 등록', result);
+  renderDiag('#failbackRegisterDiag', result.diagnosis, result.portProbe);
+
+  btn.disabled = false;
+  btn.textContent = originalText;
   if (result.settingsResult?.ok) $('#btnFailbackFollow').disabled = false;
 });
 

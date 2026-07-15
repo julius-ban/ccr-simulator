@@ -66,6 +66,43 @@ unfollow 성공 시 `unfollowed`로 전환).
 HTTP를 선택하면 TLS 인증서 관련 옵션은 의미가 없어서 자동으로 숨겨집니다. Proxy 포트(CCR 원격
 클러스터 연결용)는 ES 자체 사양상 항상 TLS 기반이라 별도 프로토콜 선택 없이 host:port만 사용합니다.
 
+## Remote Cluster 등록 단계 사전 진단 (신규)
+
+"③ Remote Cluster 등록" (또는 Failback의 "④ 역방향 Remote 등록") 버튼을 누르면 이제 등록만
+하고 끝내지 않고, 그 자리에서 바로 진단까지 합니다:
+
+1. **포트 자체 응답 확인** — ES REST 호출과 무관하게, 리더의 remote cluster server 포트(보통
+   9443)에 원시 TLS 소켓으로 먼저 접속해봅니다. remote cluster server는 항상 TLS를 쓰기 때문에,
+   TLS 핸드셰이크가 성공하는지만 봐도 "이 포트가 열려있고 뭔가 응답한다"는 강한 신호가 됩니다.
+2. **ES 레벨 연결 재시도 확인** — `_remote/info`를 한 번만 보지 않고 최대 5회, 1.5초 간격으로
+   재시도하며 실제로 `connected: true`가 되는지 확인합니다 (등록 직후엔 아직 연결 중일 수 있어서
+   한 번만 보면 오탐이 잦습니다).
+3. **원인별 진단 메시지** — 위 두 결과를 조합해서 색깔 있는 안내 박스로 바로 보여줍니다:
+   - 🟢 정상 연결됨
+   - 🟡 포트는 열려있는데 ES 레벨에서만 안 됨 → keystore 등록/인증서/server_name 쪽 문제 가능성
+   - 🔴 포트 자체가 응답 안 함 → 리더의 `remote_cluster_server.enabled`, 포트 설정, 방화벽,
+     노드 재시작 여부 확인 필요
+
+버튼을 누르는 동안은 "확인 중... (최대 10초)"로 바뀌고, 끝나면 진단 결과가 버튼 바로 아래에
+표시됩니다. follow 단계까지 가서 30초 타임아웃을 기다릴 필요 없이 이 시점에 바로 원인을 알 수 있습니다.
+
+## follow 타임아웃 진단
+
+`_ccr/follow`는 REST(9200)로 나가지만, 내부적으로 팔로워 노드가 리더의 **remote cluster server
+포트(보통 9443)**에 실제로 붙어야 완료됩니다. REST(9200) 연결이 되더라도 9443이 막혀있거나 리더에
+`remote_cluster_server.enabled`가 꺼져있으면 이 API가 응답을 못 받고 멈춥니다. 그래서:
+
+- follow 실행 전 `GET _remote/info`를 먼저 조회해서 `connected: false`면 30초를 기다리지 않고
+  즉시 원인(리더의 remote_cluster.port 설정, 방화벽 9443, keystore 등록 여부)을 안내합니다.
+- 그래도 시간이 걸리는 정상 케이스를 위해 전체 타임아웃은 15초 → 30초로 늘렸습니다.
+
+## keystore 명령어 자동완성
+
+"② keystore 명령어 보기"에서 팔로워 클러스터가 선택되어 있으면, `<FOLLOWER_HOST>` 같은 플레이스홀더
+대신 실제 등록된 host/포트/계정 정보를 채운 완성된 명령어를 보여줍니다 (팔로워가 API Key 인증이면
+`Authorization: ApiKey ...` 헤더 형태로 자동 전환됩니다). 팔로워를 선택하지 않았을 때만 플레이스홀더로
+폴백합니다.
+
 ## 실제 API 동작 설명 (항상 노출)
 
 CCR 연동/샘플 인덱스/모니터링/Failover/Failback 각 버튼 그룹 아래에 실제로 나가는 REST API(메서드

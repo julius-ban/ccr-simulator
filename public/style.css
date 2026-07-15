@@ -176,6 +176,28 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 .action-note ul { margin: 0; padding-left: 18px; }
 .action-note li { margin-bottom: 6px; color: var(--muted); }
 .action-note code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; color: #1e293b; }
+.api-body-example {
+  background: #0f172a;
+  color: #e2e8f0;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  margin: 6px 0 2px;
+  overflow-x: auto;
+}
+
+/* ---- Remote Cluster 등록 진단 결과 ---- */
+.diag-box {
+  margin-top: 10px;
+  border-radius: 6px;
+  padding: 10px 14px;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.diag-box.diag-ok { background: #ecfdf3; border: 1px solid #86efac; color: #166534; }
+.diag-box.diag-warning { background: #fffbeb; border: 1px solid #fcd34d; color: #92400e; }
+.diag-box.diag-error { background: #fef2f2; border: 1px solid #fca5a5; color: #991b1b; }
+.diag-box .diag-sub { margin-top: 4px; font-size: 11.5px; opacity: 0.85; }
 
 /* ---- 우측 아키텍처 다이어그램 ---- */
 .arch-diagram { width: 100%; height: auto; }

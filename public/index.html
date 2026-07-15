@@ -109,13 +109,44 @@
     </div>
     <div class="action-note">
       <ul>
-        <li><code>POST /_security/cross_cluster/api_key</code> — 주센터에 "DR센터가 이 인덱스를 검색/복제할 수 있는" 권한만 가진 전용 키를 발급합니다. 이 키가 없으면 DR센터는 주센터에 접근할 수 없습니다.</li>
+        <li>
+          <code>POST /_security/cross_cluster/api_key</code> — 주센터에 "DR센터가 이 인덱스를 검색/복제할 수 있는" 권한만 가진 전용 키를 발급합니다. 이 키가 없으면 DR센터는 주센터에 접근할 수 없습니다.
+          <pre class="api-body-example">{
+  "name": "ccr-&lt;remote_alias&gt;-key",
+  "access": {
+    "search": [ { "names": ["&lt;leader_index&gt;"] } ],
+    "replication": [ { "names": ["&lt;leader_index&gt;"] } ]
+  }
+}</pre>
+        </li>
         <li><code>(수동) elasticsearch-keystore add</code> — 발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 못 하고 직접 실행해야 합니다.</li>
-        <li><code>PUT /_cluster/settings</code> — DR센터에게 "주센터가 어디 있는지" 주소를 알려줍니다 (원격 클러스터 등록).</li>
-        <li><code>PUT /{인덱스}/_ccr/follow</code> — 실제 복제를 시작합니다. 이 순간부터 주센터의 데이터가 DR센터로 실시간 미러링됩니다.</li>
+        <li>
+          <code>PUT /_cluster/settings</code> — DR센터에게 "주센터가 어디 있는지" 주소를 알려줍니다 (원격 클러스터 등록).
+          <pre class="api-body-example">{
+  "persistent": {
+    "cluster": {
+      "remote": {
+        "&lt;remote_alias&gt;": {
+          "mode": "proxy",
+          "proxy_address": "&lt;leader_host&gt;:&lt;leader_proxy_port&gt;",
+          "server_name": "&lt;leader_host&gt;"
+        }
+      }
+    }
+  }
+}</pre>
+        </li>
+        <li>
+          <code>PUT /{인덱스}/_ccr/follow</code> — 실제 복제를 시작합니다. 이 순간부터 주센터의 데이터가 DR센터로 실시간 미러링됩니다.
+          <pre class="api-body-example">{
+  "remote_cluster": "&lt;remote_alias&gt;",
+  "leader_index": "&lt;leader_index&gt;"
+}</pre>
+        </li>
       </ul>
     </div>
     <div id="keystoreBox" class="code-box" style="display:none"></div>
+    <div id="registerRemoteDiag" class="diag-box" style="display:none"></div>
   </section>
 
   <!-- 4. 모니터링 -->
@@ -182,6 +213,7 @@
         <li><code>pause_follow → close → unfollow → open</code> (⑥ 버튼) — 문서 수가 양쪽 일치하는 걸 확인한 뒤, 역방향 연결을 끊고 주센터를 다시 독립적인 쓰기 가능 상태로 되돌립니다. 이후 정방향 CCR을 다시 구성하면 원래 운영 형태로 복귀합니다.</li>
       </ul>
     </div>
+    <div id="failbackRegisterDiag" class="diag-box" style="display:none"></div>
   </section>
 
   <!-- 6. 실행 로그는 우측 패널(실시간 이벤트 하단)로 이동 -->
