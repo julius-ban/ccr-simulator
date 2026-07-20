@@ -32,15 +32,6 @@ header h1 { margin: 0 0 4px 0; font-size: 20px; }
   background: #1f2937; padding: 6px 10px; border-radius: 6px;
 }
 .switch-label input { cursor: pointer; }
-.sim-banner {
-  margin-top: 10px;
-  background: #422006;
-  color: #fed7aa;
-  border: 1px solid #c2410c;
-  border-radius: 6px;
-  padding: 8px 14px;
-  font-size: 12.5px;
-}
 
 .layout {
   max-width: 1280px;
@@ -181,27 +172,56 @@ hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
 }
 .term-explain strong { color: #1e293b; }
 
-/* ---- 각 단계에서 실제 나가는 API와 목적 (항상 노출) ---- */
-.action-note {
-  margin-top: 10px;
-  background: #f8fafc;
-  border: 1px dashed #cbd5e1;
+/* ---- 버튼에 붙는 API 설명 호버 툴팁 ---- */
+button[data-tooltip] { position: relative; }
+button[data-tooltip]:hover::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  bottom: 125%;
+  left: 0;
+  background: #111827;
+  color: #f1f5f9;
+  padding: 9px 12px;
   border-radius: 6px;
-  padding: 10px 14px;
-  font-size: 12px;
+  font-size: 11.5px;
+  font-weight: 400;
+  width: 280px;
+  line-height: 1.6;
+  white-space: pre-line;
+  z-index: 40;
+  box-shadow: 0 4px 14px rgba(0,0,0,0.3);
 }
-.action-note ul { margin: 0; padding-left: 18px; }
-.action-note li { margin-bottom: 6px; color: var(--muted); }
-.action-note code { background: #e2e8f0; padding: 1px 5px; border-radius: 4px; font-size: 11.5px; color: #1e293b; }
+button[data-tooltip]:hover::before {
+  content: '';
+  position: absolute;
+  bottom: 118%;
+  left: 14px;
+  border: 6px solid transparent;
+  border-top-color: #111827;
+  z-index: 40;
+}
+
+/* ---- 완성된 API 미리보기용 코드 블록 ---- */
 .api-body-example {
   background: #0f172a;
   color: #e2e8f0;
-  padding: 8px 10px;
-  border-radius: 5px;
-  font-size: 11px;
-  margin: 6px 0 2px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 11.5px;
+  margin: 0;
   overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
+
+/* ---- 모달 내부 탭 (완성된 API 미리보기) ---- */
+.tab-buttons { display: flex; gap: 6px; margin: 12px 0 10px; }
+.tab-btn {
+  background: #f1f5f9; color: #475569; border: 1px solid var(--border);
+  border-radius: 6px 6px 0 0; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
+}
+.tab-btn.active { background: #0f172a; color: white; border-color: #0f172a; }
+.tab-panel { min-height: 60px; }
 
 /* ---- Remote Cluster 등록 진단 결과 ---- */
 .diag-box {

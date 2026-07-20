@@ -2,30 +2,23 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8" />
-<title>Elasticsearch CCR Failover/Failback 자동화</title>
+<title>Elasticsearch CCR Failover/Failback 가이드</title>
 <link rel="stylesheet" href="style.css" />
 </head>
 <body>
 <header>
   <div class="header-top">
     <div>
-      <h1>ES CCR Failover / Failback 자동화 콘솔</h1>
+      <h1>ES CCR Failover / Failback 가이드 콘솔</h1>
       <p class="subtitle">주센터 · DR센터 클러스터 등록부터 CCR 연동, Failover/Failback 실행까지</p>
     </div>
     <div class="header-controls">
-      <label class="switch-label" title="켜면 CCR 관련 버튼들이 실제 클러스터를 호출하지 않고, 가짜(하지만 그럴듯한) 응답으로 동작합니다. 클러스터 없이 연습하거나, 위험한 조작을 안전하게 체험할 때 켜세요.">
-        <input type="checkbox" id="simModeToggle" />
-        🧪 시뮬레이션 모드
-      </label>
       <label class="switch-label" title="켜면 지금 눌러야 할 다음 버튼이 강조되고, 아직 순서가 안 된 버튼은 흐려집니다.">
-        <input type="checkbox" id="guideModeToggle" />
+        <input type="checkbox" id="guideModeToggle" checked />
         🧭 가이드 모드
       </label>
       <button type="button" id="btnOpenGlossary" class="info-btn-alt">📖 용어집</button>
     </div>
-  </div>
-  <div id="simModeBanner" class="sim-banner" style="display:none">
-    🧪 시뮬레이션 모드가 켜져 있습니다 — CCR 연동/모니터링/Failover/Failback 버튼은 실제 클러스터를 건드리지 않고 가짜 데이터로 동작합니다.
   </div>
 </header>
 
@@ -37,6 +30,23 @@
       <button type="button" id="btnCloseGlossary" class="info-btn-alt">닫기</button>
     </div>
     <dl id="glossaryList" class="glossary-list"></dl>
+  </div>
+</div>
+
+<!-- 완성된 API 미리보기 모달 (샘플 인덱스 생성 전용) -->
+<div id="apiPreviewModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>✅ 완성된 API 미리보기</h3>
+      <button type="button" id="btnCloseApiPreview" class="info-btn-alt">닫기</button>
+    </div>
+    <p class="hint">현재 입력값 기준으로 실제 전송될 요청을 그대로 보여줍니다 (실행은 아직 안 됨).</p>
+    <div class="tab-buttons">
+      <button type="button" class="tab-btn active" data-tab="indexApiTab">인덱스 생성 API</button>
+      <button type="button" class="tab-btn" data-tab="bulkApiTab">시드 삽입 API</button>
+    </div>
+    <div id="indexApiTab" class="tab-panel"></div>
+    <div id="bulkApiTab" class="tab-panel" style="display:none"></div>
   </div>
 </div>
 
@@ -110,12 +120,7 @@
     </details>
     <div class="step-buttons">
       <button id="btnCreateSampleIndex">인덱스 생성 + 시드 삽입</button>
-    </div>
-    <div class="action-note">
-      <ul>
-        <li><code>PUT /{인덱스}</code> — 벡터(임베딩) 필드를 포함한 인덱스를 생성합니다. 매핑/설정은 주신 rag-vectors 스펙을 그대로 사용합니다.</li>
-        <li><code>POST /_bulk</code> — 테스트용 문서를 배치 단위로 대량 삽입합니다. 한 번에 다 보내지 않고 배치별로 나눠 보내서 서버 부하를 조절합니다.</li>
-      </ul>
+      <button type="button" id="btnPreviewSampleApi" class="info-btn-alt">✅ 완성된 API 보기</button>
     </div>
   </section>
 
@@ -131,48 +136,10 @@
       <label>Follower 인덱스 <input id="followerIndex" value="rag-vectors-follower" /></label>
     </div>
     <div class="step-buttons">
-      <button id="btnGenKey">① API Key 발급</button>
-      <button id="btnShowKeystore" disabled>② keystore 명령어 보기</button>
-      <button id="btnRegisterRemote" disabled>③ Remote Cluster 등록</button>
-      <button id="btnFollow" disabled>④ Follower Index 생성</button>
-    </div>
-    <div class="action-note">
-      <ul>
-        <li>
-          <code>POST /_security/cross_cluster/api_key</code> — 주센터에 "DR센터가 이 인덱스를 검색/복제할 수 있는" 권한만 가진 전용 키를 발급합니다. 이 키가 없으면 DR센터는 주센터에 접근할 수 없습니다.
-          <pre class="api-body-example">{
-  "name": "ccr-&lt;remote_alias&gt;-key",
-  "access": {
-    "search": [ { "names": ["&lt;leader_index&gt;"] } ],
-    "replication": [ { "names": ["&lt;leader_index&gt;"] } ]
-  }
-}</pre>
-        </li>
-        <li><code>(수동) elasticsearch-keystore add</code> — 발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 못 하고 직접 실행해야 합니다.</li>
-        <li>
-          <code>PUT /_cluster/settings</code> — DR센터에게 "주센터가 어디 있는지" 주소를 알려줍니다 (원격 클러스터 등록).
-          <pre class="api-body-example">{
-  "persistent": {
-    "cluster": {
-      "remote": {
-        "&lt;remote_alias&gt;": {
-          "mode": "proxy",
-          "proxy_address": "&lt;leader_host&gt;:&lt;leader_proxy_port&gt;",
-          "server_name": "&lt;leader_host&gt;"
-        }
-      }
-    }
-  }
-}</pre>
-        </li>
-        <li>
-          <code>PUT /{인덱스}/_ccr/follow</code> — 실제 복제를 시작합니다. 이 순간부터 주센터의 데이터가 DR센터로 실시간 미러링됩니다.
-          <pre class="api-body-example">{
-  "remote_cluster": "&lt;remote_alias&gt;",
-  "leader_index": "&lt;leader_index&gt;"
-}</pre>
-        </li>
-      </ul>
+      <button id="btnGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;주센터에 &quot;DR센터가 이 인덱스를 검색/복제할 수 있는&quot; 권한만 가진 전용 키를 발급합니다.">① API Key 발급</button>
+      <button id="btnShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 실행할 수 없습니다.">② keystore 명령어 보기</button>
+      <button id="btnRegisterRemote" disabled data-tooltip="PUT /_cluster/settings&#10;DR센터에게 &quot;주센터가 어디 있는지&quot; 주소를 알려줍니다 (원격 클러스터 등록).">③ Remote Cluster 등록</button>
+      <button id="btnFollow" disabled data-tooltip="PUT /{인덱스}/_ccr/follow&#10;실제 복제를 시작합니다. 이 순간부터 주센터 데이터가 DR센터로 실시간 미러링됩니다.">④ Follower Index 생성</button>
     </div>
     <div id="keystoreBox" class="code-box" style="display:none"></div>
     <div id="registerRemoteDiag" class="diag-box" style="display:none"></div>
@@ -186,13 +153,8 @@
       <label>인덱스 <input id="monitorIndex" value="rag-vectors-follower" /></label>
     </div>
     <div class="step-buttons">
-      <button id="btnStartMonitor">모니터링 시작 (5초 간격)</button>
+      <button id="btnStartMonitor" data-tooltip="GET /{인덱스}/_ccr/stats&#10;복제 지연(lag), 지금까지 복제된 문서 수, 에러 여부 등을 5초 간격으로 조회합니다.">모니터링 시작 (5초 간격)</button>
       <button id="btnStopMonitor">중지</button>
-    </div>
-    <div class="action-note">
-      <ul>
-        <li><code>GET /{인덱스}/_ccr/stats</code> — 복제 지연(lag), 지금까지 복제된 문서 수, 에러 여부 등을 5초 간격으로 조회합니다. 실제 데이터가 오가지는 않고 상태만 확인합니다.</li>
-      </ul>
     </div>
     <div id="lagGaugeBox" class="lag-gauge-box" style="display:none">
       <div class="lag-gauge-row">
@@ -221,15 +183,7 @@
       <label>Follower 인덱스 <input id="drIndex" value="rag-vectors-follower" /></label>
     </div>
     <div class="step-buttons">
-      <button id="btnFailover" class="danger">Failover 실행 (pause→close→unfollow→open)</button>
-    </div>
-    <div class="action-note">
-      <ul>
-        <li><code>POST /{인덱스}/_ccr/pause_follow</code> — 복제를 일시정지합니다 (더는 주센터 데이터를 받지 않음).</li>
-        <li><code>POST /{인덱스}/_close</code> — 인덱스를 잠깐 닫아서 설정을 안전하게 바꿀 수 있는 상태로 만듭니다.</li>
-        <li><code>POST /{인덱스}/_ccr/unfollow</code> — 팔로워 관계를 완전히 해제합니다. 이제 이 인덱스는 독립적인, 쓰기가 가능한 일반 인덱스가 됩니다.</li>
-        <li><code>POST /{인덱스}/_open</code> — 인덱스를 다시 열어서 애플리케이션이 바로 쓰기/읽기를 할 수 있게 합니다.</li>
-      </ul>
+      <button id="btnFailover" class="danger" data-tooltip="pause_follow → _close → unfollow → _open&#10;복제를 멈추고 독립적인 쓰기 가능 인덱스로 전환합니다.">Failover 실행 (pause→close→unfollow→open)</button>
     </div>
 
     <hr />
@@ -239,20 +193,12 @@
       <label>Remote alias(역방향) <input id="failbackAlias" value="cluster_b" /></label>
     </div>
     <div class="step-buttons">
-      <button id="btnPrepareFailback">① 원 Primary 인덱스 삭제(재수신 준비)</button>
-      <button id="btnFailbackGenKey">② 역방향 API Key 발급</button>
-      <button id="btnFailbackShowKeystore" disabled>③ keystore 명령어 보기</button>
-      <button id="btnFailbackRegisterRemote" disabled>④ 역방향 Remote 등록</button>
-      <button id="btnFailbackFollow" disabled>⑤ 역방향 Follower 생성</button>
-      <button id="btnFailbackUnfollow">⑥ 역방향 해제(동기화 완료 후)</button>
-    </div>
-    <div class="action-note">
-      <ul>
-        <li><code>DELETE /{인덱스}</code> — 원래 주센터에 남아있던 예전 인덱스를 지웁니다. DR센터로부터 다시 데이터를 받을 자리를 비우는 것입니다.</li>
-        <li><code>POST /_security/cross_cluster/api_key</code> — 이번엔 반대로, 주센터가 DR센터 데이터를 가져올 수 있는 키를 DR센터에서 발급합니다.</li>
-        <li><code>PUT /_cluster/settings</code> + <code>PUT /_ccr/follow</code> — 주센터를 DR센터의 팔로워로 등록해서, Failover 중 DR에 쌓인 데이터를 다시 주센터로 복제해옵니다 (역방향 CCR).</li>
-        <li><code>pause_follow → close → unfollow → open</code> (⑥ 버튼) — 문서 수가 양쪽 일치하는 걸 확인한 뒤, 역방향 연결을 끊고 주센터를 다시 독립적인 쓰기 가능 상태로 되돌립니다. 이후 정방향 CCR을 다시 구성하면 원래 운영 형태로 복귀합니다.</li>
-      </ul>
+      <button id="btnPrepareFailback" data-tooltip="DELETE /{인덱스}&#10;원래 주센터에 남아있던 예전 인덱스를 지웁니다. DR센터로부터 다시 데이터를 받을 자리를 비웁니다.">① 원 Primary 인덱스 삭제(재수신 준비)</button>
+      <button id="btnFailbackGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;이번엔 반대로, 주센터가 DR센터 데이터를 가져올 수 있는 키를 DR센터에서 발급합니다.">② 역방향 API Key 발급</button>
+      <button id="btnFailbackShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;원 Primary(이제 follower)의 각 노드에 키를 등록합니다.">③ keystore 명령어 보기</button>
+      <button id="btnFailbackRegisterRemote" disabled data-tooltip="PUT /_cluster/settings&#10;주센터에게 DR센터가 어디 있는지 알려줍니다 (역방향 원격 클러스터 등록).">④ 역방향 Remote 등록</button>
+      <button id="btnFailbackFollow" disabled data-tooltip="PUT /{인덱스}/_ccr/follow&#10;Failover 중 DR에 쌓인 데이터를 주센터로 복제해옵니다 (역방향).">⑤ 역방향 Follower 생성</button>
+      <button id="btnFailbackUnfollow" data-tooltip="pause_follow → close → unfollow → open + remote 설정 제거&#10;역방향 연결을 끊고 주센터를 다시 독립 상태로 되돌립니다.">⑥ 역방향 해제(동기화 완료 후)</button>
     </div>
     <div id="failbackRegisterDiag" class="diag-box" style="display:none"></div>
   </section>

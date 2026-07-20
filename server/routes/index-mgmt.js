@@ -145,4 +145,56 @@ router.get('/:clusterId/:indexName/count', async (req, res) => {
   res.json(result);
 });
 
+/**
+ * "완성된 API 보기" 다이얼로그용 - 실제 실행 없이, 지금 입력값 기준으로
+ * 나갈 요청(인덱스 생성 body / 시드 삽입 _bulk 예시)을 그대로 만들어서 보여줍니다.
+ * 실제 sample-index 라우트와 완전히 같은 로직(buildDefaultIndexBody, makeDocument)을 써서
+ * 미리보기와 실제 실행 결과가 어긋나지 않게 합니다.
+ */
+router.post('/preview', (req, res) => {
+  const { indexName, dims, similarity, seedDocs, batchSize, offset, customBody } = req.body;
+  const dimsNum = Number(dims) || 768;
+  const idxName = indexName || 'rag-vectors';
+
+  let indexBody = null;
+  let indexBodyError = null;
+  if (customBody) {
+    try { indexBody = JSON.parse(customBody); } catch (e) { indexBodyError = e.message; }
+  } else {
+    indexBody = buildDefaultIndexBody(dimsNum, similarity || 'cosine');
+  }
+
+  const seedCount = Number(seedDocs) || 0;
+  const batch = Math.max(Number(batchSize) || 200, 1);
+  const startOffset = Number(offset) || 0;
+  const totalBatches = seedCount > 0 ? Math.ceil(seedCount / batch) : 0;
+
+  let sampleBody = '';
+  if (seedCount > 0) {
+    const sampleSize = Math.min(2, batch, seedCount);
+    const lines = [];
+    for (let i = 0; i < sampleSize; i++) {
+      const { chunkId, doc } = makeDocument(i, startOffset, dimsNum);
+      lines.push(JSON.stringify({ index: { _index: idxName, _id: chunkId } }));
+      lines.push(JSON.stringify(doc));
+    }
+    sampleBody = lines.join('\n') + '\n';
+  }
+
+  res.json({
+    indexRequest: { method: 'PUT', path: `/${idxName}`, body: indexBody, error: indexBodyError },
+    bulkRequest: {
+      method: 'POST',
+      path: '/_bulk',
+      totalDocs: seedCount,
+      batchSize: batch,
+      totalBatches,
+      sampleBody,
+      note: seedCount > 0
+        ? `총 ${seedCount}건을 배치당 ${batch}건씩, ${totalBatches}번의 _bulk 요청으로 나눠 보냅니다. 아래는 그 중 첫 배치의 앞부분(최대 2건) 예시입니다.`
+        : '시드 문서 수가 0이라 _bulk 요청은 실행되지 않습니다 (인덱스만 생성됩니다).',
+    },
+  });
+});
+
 module.exports = router;

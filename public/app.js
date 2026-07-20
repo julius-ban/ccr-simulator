@@ -3,139 +3,10 @@ const $ = (sel) => document.querySelector(sel);
 let clusters = [];
 let ccrLinks = [];
 let monitorTimer = null;
-let GUIDE_MODE = false;
-
-// ---------- 🧪 시뮬레이션 모드 ----------
-const SIM = { enabled: false, stats: {} };
-
-function shouldSimulate(method, path) {
-  return (
-    /^\/api\/clusters\/.+\/test$/.test(path) ||
-    path.startsWith('/api/ccr/') ||
-    path.startsWith('/api/dr/') ||
-    path === '/api/index-mgmt/sample-index'
-  );
-}
-
-function simDelay(ms = 450) {
-  return new Promise((r) => setTimeout(r, ms + Math.random() * 350));
-}
-
-async function mockApi(method, path, body = {}) {
-  await simDelay();
-
-  if (/^\/api\/clusters\/.+\/test$/.test(path)) {
-    return {
-      health: { ok: true, status: 200, path: '/_cluster/health', method: 'GET', response: { status: 'green', cluster_name: 'sim-cluster' } },
-      license: { ok: true, status: 200, path: '/_license', method: 'GET', response: { license: { type: 'trial', status: 'active' } } },
-    };
-  }
-
-  if (path === '/api/ccr/generate-api-key') {
-    return {
-      result: {
-        ok: true, status: 200, path: '/_security/cross_cluster/api_key', method: 'POST',
-        response: { id: 'sim-key-id', name: `ccr-${body.remoteAlias}-key`, encoded: btoa(`sim:${Date.now()}`) },
-      },
-      keystoreCommand: '(시뮬레이션 모드) 실제 keystore 명령 실행은 필요 없습니다. 실전 모드에서는 여기에 실제 명령어가 표시됩니다.',
-    };
-  }
-
-  if (path === '/api/ccr/register-remote') {
-    return {
-      settingsResult: { ok: true, status: 200, path: '/_cluster/settings', method: 'PUT', response: { acknowledged: true } },
-      remoteInfoResult: { ok: true, status: 200, path: '/_remote/info', method: 'GET', response: { [body.remoteAlias]: { connected: true, mode: 'proxy' } } },
-      portProbe: { reachable: true, tlsHandshake: true },
-      diagnosis: { level: 'ok', message: '(시뮬레이션) 정상적으로 연결되었습니다.' },
-    };
-  }
-
-  if (path === '/api/ccr/follow') {
-    const key = `${body.followerClusterId}:${body.followerIndex}`;
-    SIM.stats[key] = { opsWritten: 0, leaderCp: 0 };
-    upsertLocalLink({
-      leaderClusterId: body.leaderClusterId, followerClusterId: body.followerClusterId,
-      remoteAlias: body.remoteAlias, leaderIndex: body.leaderIndex, followerIndex: body.followerIndex,
-      direction: body.direction || 'primary-to-dr',
-    });
-    return {
-      result: {
-        ok: true, status: 200, path: `/${body.followerIndex}/_ccr/follow`, method: 'PUT',
-        response: { follow_index_created: true, follow_index_shards_acked: true, index_following_started: true },
-      },
-    };
-  }
-
-  if (/^\/api\/ccr\/stats\//.test(path)) {
-    const parts = path.split('/'); // /api/ccr/stats/:clusterId/:indexName
-    const clusterId = parts[4];
-    const indexName = parts[5];
-    const key = `${clusterId}:${indexName}`;
-    if (!SIM.stats[key]) SIM.stats[key] = { opsWritten: 0, leaderCp: 0 };
-    const s = SIM.stats[key];
-    // 리더가 계속 앞서가고, 팔로워가 서서히 따라잡는 모양을 흉내
-    s.leaderCp += Math.floor(Math.random() * 40) + 10;
-    const catchUp = Math.max(Math.floor((s.leaderCp - s.opsWritten) * 0.6), 5);
-    s.opsWritten = Math.min(s.opsWritten + catchUp, s.leaderCp);
-    return {
-      ok: true, status: 200, path, method: 'GET',
-      response: {
-        indices: [{
-          index: indexName,
-          shards: [{
-            leader_global_checkpoint: s.leaderCp,
-            follower_global_checkpoint: s.opsWritten,
-            operations_written: s.opsWritten,
-            fatal_exception: null,
-          }],
-        }],
-      },
-    };
-  }
-
-  if (path === '/api/dr/failover') {
-    markLocalUnfollowed(body.clusterId, body.indexName);
-    return {
-      log: [
-        { step: 'pause_follow', ok: true, status: 200, path: `/${body.indexName}/_ccr/pause_follow`, method: 'POST', response: {} },
-        { step: 'close', ok: true, status: 200, path: `/${body.indexName}/_close`, method: 'POST', response: { acknowledged: true } },
-        { step: 'unfollow', ok: true, status: 200, path: `/${body.indexName}/_ccr/unfollow`, method: 'POST', response: { acknowledged: true } },
-        { step: 'open', ok: true, status: 200, path: `/${body.indexName}/_open`, method: 'POST', response: { acknowledged: true } },
-      ],
-      aborted: false,
-    };
-  }
-
-  if (path === '/api/dr/prepare-failback') {
-    return { result: { ok: true, status: 200, path: `/${body.indexName}`, method: 'DELETE', response: { acknowledged: true } } };
-  }
-
-  if (path === '/api/ccr/remove-remote') {
-    removeLocalLink(body.clusterId, body.followerIndex);
-    return { result: { ok: true, status: 200, path: '/_cluster/settings', method: 'PUT', response: { acknowledged: true } } };
-  }
-
-  if (path === '/api/index-mgmt/sample-index') {
-    return {
-      log: [
-        { step: 'create_index', ok: true, status: 200, path: `/${body.indexName}`, method: 'PUT', response: { acknowledged: true, shards_acknowledged: true, index: body.indexName } },
-        { step: 'seed_summary', totalRequested: Number(body.seedDocs) || 0, totalInserted: Number(body.seedDocs) || 0 },
-      ],
-    };
-  }
-
-  if (path.startsWith('/api/verify/')) {
-    return { error: '시뮬레이션 모드에서는 검증(쿼리 비교) 기능은 지원하지 않습니다. 상단의 시뮬레이션 모드를 끄고 실제 클러스터로 확인해주세요.' };
-  }
-
-  return { ok: true, simulated: true };
-}
+let GUIDE_MODE = true; // 가이드 모드 기본 적용
 
 // ---------- 공통 유틸 ----------
 async function api(method, path, body) {
-  if (SIM.enabled && shouldSimulate(method, path)) {
-    return mockApi(method, path, body);
-  }
   const res = await fetch(path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -201,11 +72,6 @@ function updateGuideHighlights() {
 $('#guideModeToggle').addEventListener('change', (e) => {
   GUIDE_MODE = e.target.checked;
   updateGuideHighlights();
-});
-
-$('#simModeToggle').addEventListener('change', (e) => {
-  SIM.enabled = e.target.checked;
-  $('#simModeBanner').style.display = SIM.enabled ? 'block' : 'none';
 });
 
 // ---------- 📖 용어집 ----------
@@ -412,8 +278,13 @@ $('#btnFollow').addEventListener('click', async () => {
 $('#btnCreateSampleIndex').addEventListener('click', async () => {
   const clusterId = $('#sampleIndexCluster').value;
   if (!clusterId) return alert('클러스터를 선택하세요.');
-  const result = await api('POST', '/api/index-mgmt/sample-index', {
-    clusterId,
+  const result = await api('POST', '/api/index-mgmt/sample-index', { clusterId, ...sampleIndexFormValues() });
+  appendLog('샘플 벡터 인덱스 생성', result);
+  markGuideStep('btnCreateSampleIndex');
+});
+
+function sampleIndexFormValues() {
+  return {
     indexName: $('#sampleIndexName').value,
     dims: $('#sampleDims').value,
     similarity: $('#sampleSimilarity').value,
@@ -421,9 +292,38 @@ $('#btnCreateSampleIndex').addEventListener('click', async () => {
     batchSize: $('#sampleBatchSize').value,
     offset: $('#sampleOffset').value,
     customBody: $('#sampleCustomBody').value.trim() || undefined,
+  };
+}
+
+$('#btnPreviewSampleApi').addEventListener('click', async () => {
+  const preview = await api('POST', '/api/index-mgmt/preview', sampleIndexFormValues());
+
+  const idx = preview.indexRequest;
+  $('#indexApiTab').innerHTML = `<pre class="api-body-example">${idx.method} ${idx.path}
+
+${idx.error ? `❌ JSON 파싱 오류: ${idx.error}` : JSON.stringify(idx.body, null, 2)}</pre>`;
+
+  const bulk = preview.bulkRequest;
+  $('#bulkApiTab').innerHTML = `<pre class="api-body-example">${bulk.method} ${bulk.path}
+
+${bulk.note}
+
+${bulk.sampleBody || '(없음)'}</pre>`;
+
+  $('#apiPreviewModal').style.display = 'flex';
+});
+
+document.querySelectorAll('#apiPreviewModal .tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#apiPreviewModal .tab-btn').forEach((b) => b.classList.remove('active'));
+    btn.classList.add('active');
+    $('#indexApiTab').style.display = btn.dataset.tab === 'indexApiTab' ? 'block' : 'none';
+    $('#bulkApiTab').style.display = btn.dataset.tab === 'bulkApiTab' ? 'block' : 'none';
   });
-  appendLog('샘플 벡터 인덱스 생성', result);
-  markGuideStep('btnCreateSampleIndex');
+});
+$('#btnCloseApiPreview').addEventListener('click', () => { $('#apiPreviewModal').style.display = 'none'; });
+$('#apiPreviewModal').addEventListener('click', (e) => {
+  if (e.target.id === 'apiPreviewModal') $('#apiPreviewModal').style.display = 'none';
 });
 
 function updateLagGauge(result) {
@@ -760,27 +660,6 @@ function applyState(state) {
   renderArchDiagram();
   renderClusterList();
   updateGuideHighlights();
-}
-
-// ---- 시뮬레이션 모드 전용: 백엔드 SSE 없이 프론트에서 직접 CCR 링크 상태를 바꿔서 다이어그램에 반영 ----
-function upsertLocalLink({ leaderClusterId, followerClusterId, remoteAlias, leaderIndex, followerIndex, direction }) {
-  const idx = ccrLinks.findIndex((l) => l.followerClusterId === followerClusterId && l.followerIndex === followerIndex);
-  const rec = {
-    id: `sim-${Date.now()}`, leaderClusterId, followerClusterId, remoteAlias, leaderIndex, followerIndex,
-    direction, status: 'linked', updatedAt: new Date().toISOString(),
-  };
-  if (idx >= 0) ccrLinks[idx] = rec; else ccrLinks.push(rec);
-  renderArchDiagram();
-}
-
-function markLocalUnfollowed(followerClusterId, followerIndex) {
-  const link = ccrLinks.find((l) => l.followerClusterId === followerClusterId && l.followerIndex === followerIndex);
-  if (link) { link.status = 'unfollowed'; renderArchDiagram(); }
-}
-
-function removeLocalLink(followerClusterId, followerIndex) {
-  ccrLinks = ccrLinks.filter((l) => !(l.followerClusterId === followerClusterId && l.followerIndex === followerIndex));
-  renderArchDiagram();
 }
 
 function pulseArch(clusterId) {
