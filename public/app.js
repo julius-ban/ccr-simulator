@@ -3,7 +3,7 @@ const $ = (sel) => document.querySelector(sel);
 let clusters = [];
 let ccrLinks = [];
 let monitorTimer = null;
-let GUIDE_MODE = true; // 가이드 모드 기본 적용
+const GUIDE_MODE = true; // 가이드 모드는 항상 켜져 있음 (토글 없음)
 
 // ---------- 공통 유틸 ----------
 async function api(method, path, body) {
@@ -69,11 +69,6 @@ function updateGuideHighlights() {
   });
 }
 
-$('#guideModeToggle').addEventListener('change', (e) => {
-  GUIDE_MODE = e.target.checked;
-  updateGuideHighlights();
-});
-
 // ---------- 📖 용어집 ----------
 const GLOSSARY = [
   ['CCR (Cross-Cluster Replication)', '한 클러스터(리더)의 인덱스를 다른 클러스터(팔로워)로 실시간에 가깝게 복제하는 Elasticsearch 기능입니다.'],
@@ -128,7 +123,7 @@ function renderClusterList() {
     div.innerHTML = `
       <span class="role-${c.role}">${c.role === 'primary' ? '주센터' : 'DR센터'}</span>
       <strong>${c.name}</strong>
-      <span>${c.host}:${c.restPort} (proxy ${c.proxyPort}) · ${(c.protocol || 'https').toUpperCase()}</span>
+      <span>${c.host}:${c.restPort} (proxy ${c.proxyPort} / transport ${c.transportPort || 9300}) · ${(c.protocol || 'https').toUpperCase()}</span>
       <span>${healthDotHtml(c)}</span>
       <div class="chip-actions">
         <button data-test="${c.id}">연결 테스트</button>
@@ -175,6 +170,40 @@ $('#sampleIndexCluster').addEventListener('change', (e) => {
 $('#leaderSelect').addEventListener('change', (e) => {
   if (!$('#sampleIndexCluster').value && e.target.value) $('#sampleIndexCluster').value = e.target.value;
 });
+
+// ---- CCR 인증 방식(API Key/TLS 인증서) & 연결 모드(Sniff/Proxy) 토글 ----
+// API Key 인증은 항상 Proxy 모드만 지원 (원격 클러스터 서버 인터페이스 자체가 proxy 전용).
+// TLS 인증서 인증은 Sniff(기본)/Proxy 둘 다 선택 가능.
+function wireAuthModeControls(authModeId, connModeId, extraSeedsFieldId, apiKeyStepsGroupId, certInfoId) {
+  const authSel = $('#' + authModeId);
+  const connSel = $('#' + connModeId);
+  const extraSeedsField = $('#' + extraSeedsFieldId);
+  const apiKeyGroup = apiKeyStepsGroupId ? $('#' + apiKeyStepsGroupId) : null;
+  const certInfo = $('#' + certInfoId);
+
+  function apply() {
+    const isCert = authSel.value === 'cert';
+    if (apiKeyGroup) apiKeyGroup.style.display = isCert ? 'none' : 'flex';
+    certInfo.style.display = isCert ? 'block' : 'none';
+    connSel.disabled = !isCert;
+    if (!isCert) {
+      connSel.value = 'proxy'; // API Key 인증은 Proxy 고정
+    } else if (!connSel.dataset.userSet) {
+      connSel.value = 'sniff'; // 인증서 인증 기본값은 Sniff
+    }
+    extraSeedsField.style.display = isCert && connSel.value === 'sniff' ? 'flex' : 'none';
+  }
+
+  authSel.addEventListener('change', apply);
+  connSel.addEventListener('change', () => {
+    connSel.dataset.userSet = '1';
+    extraSeedsField.style.display = authSel.value === 'cert' && connSel.value === 'sniff' ? 'flex' : 'none';
+  });
+  apply();
+}
+
+wireAuthModeControls('ccrAuthMode', 'ccrConnectionMode', 'extraSeedsField', 'apiKeyStepsGroup', 'certAuthInfo');
+wireAuthModeControls('failbackAuthMode', 'failbackConnectionMode', 'failbackExtraSeedsField', 'failbackApiKeyStepsGroup', 'failbackCertAuthInfo');
 
 $('#clusterForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -244,8 +273,12 @@ $('#btnRegisterRemote').addEventListener('click', async () => {
   const result = await api('POST', '/api/ccr/register-remote', {
     followerClusterId,
     remoteAlias,
-    leaderProxyHost: leader.host,
+    authMode: $('#ccrAuthMode').value,
+    connectionMode: $('#ccrConnectionMode').value,
+    leaderHost: leader.host,
     leaderProxyPort: leader.proxyPort,
+    leaderTransportPort: leader.transportPort || 9300,
+    extraSeeds: $('#extraSeeds').value,
     serverName: leader.host,
   });
   appendLog('③ Remote Cluster 등록', result);
@@ -272,6 +305,46 @@ $('#btnFollow').addEventListener('click', async () => {
   });
   appendLog('④ Follower Index 생성', result);
   markGuideStep('btnFollow');
+});
+
+// ---------- Auto-follow 패턴 ----------
+$('#btnAutoFollowCreate').addEventListener('click', async () => {
+  const followerClusterId = $('#followerSelect').value;
+  if (!followerClusterId) return alert('Follower 클러스터(DR센터)를 선택하세요.');
+
+  const result = await api('POST', '/api/ccr/auto-follow', {
+    followerClusterId,
+    patternName: $('#autoFollowName').value,
+    remoteAlias: $('#remoteAlias').value,
+    leaderIndexPatterns: $('#autoFollowLeaderPattern').value,
+    followIndexPattern: $('#autoFollowFollowPattern').value,
+  });
+  appendLog('Auto-follow 패턴 생성', result);
+  $('#autoFollowResult').style.display = 'block';
+  $('#autoFollowResult').textContent = pretty(result);
+});
+
+$('#btnAutoFollowStatus').addEventListener('click', async () => {
+  const followerClusterId = $('#followerSelect').value;
+  const patternName = $('#autoFollowName').value;
+  if (!followerClusterId) return alert('Follower 클러스터(DR센터)를 선택하세요.');
+
+  const result = await api('GET', `/api/ccr/auto-follow/${followerClusterId}/${patternName}`);
+  appendLog('Auto-follow 상태 조회', result);
+  $('#autoFollowResult').style.display = 'block';
+  $('#autoFollowResult').textContent = pretty(result);
+});
+
+$('#btnAutoFollowDelete').addEventListener('click', async () => {
+  const followerClusterId = $('#followerSelect').value;
+  const patternName = $('#autoFollowName').value;
+  if (!followerClusterId) return alert('Follower 클러스터(DR센터)를 선택하세요.');
+  if (!confirm(`Auto-follow 패턴 '${patternName}'을 삭제하시겠습니까? (이미 생성된 팔로워 인덱스는 유지됩니다)`)) return;
+
+  const result = await api('DELETE', `/api/ccr/auto-follow/${followerClusterId}/${patternName}`);
+  appendLog('Auto-follow 패턴 삭제', result);
+  $('#autoFollowResult').style.display = 'block';
+  $('#autoFollowResult').textContent = pretty(result);
 });
 
 // ---------- 3. 샘플 벡터 인덱스 ----------
@@ -423,8 +496,12 @@ $('#btnFailbackRegisterRemote').addEventListener('click', async () => {
   const result = await api('POST', '/api/ccr/register-remote', {
     followerClusterId,
     remoteAlias,
-    leaderProxyHost: dr.host,
+    authMode: $('#failbackAuthMode').value,
+    connectionMode: $('#failbackConnectionMode').value,
+    leaderHost: dr.host,
     leaderProxyPort: dr.proxyPort,
+    leaderTransportPort: dr.transportPort || 9300,
+    extraSeeds: $('#failbackExtraSeeds').value,
     serverName: dr.host,
   });
   appendLog('④ 역방향 Remote 등록', result);

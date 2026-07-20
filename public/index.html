@@ -13,10 +13,6 @@
       <p class="subtitle">주센터 · DR센터 클러스터 등록부터 CCR 연동, Failover/Failback 실행까지</p>
     </div>
     <div class="header-controls">
-      <label class="switch-label" title="켜면 지금 눌러야 할 다음 버튼이 강조되고, 아직 순서가 안 된 버튼은 흐려집니다.">
-        <input type="checkbox" id="guideModeToggle" checked />
-        🧭 가이드 모드
-      </label>
       <button type="button" id="btnOpenGlossary" class="info-btn-alt">📖 용어집</button>
     </div>
   </div>
@@ -72,7 +68,8 @@
         </select>
       </label>
       <label>REST 포트 <input name="restPort" value="9200" required /></label>
-      <label>Proxy 포트(CCR) <input name="proxyPort" value="9443" /></label>
+      <label>Proxy 포트(API Key CCR용) <input name="proxyPort" value="9443" /></label>
+      <label>Transport 포트(Sniff/인증서 CCR용) <input name="transportPort" value="9300" /></label>
       <label>인증 방식
         <select name="authType" id="authType">
           <option value="basic">ID/Password</option>
@@ -134,15 +131,55 @@
       <label>Remote alias <input id="remoteAlias" value="cluster_a" /></label>
       <label>Leader 인덱스 <input id="leaderIndex" value="rag-vectors" /></label>
       <label>Follower 인덱스 <input id="followerIndex" value="rag-vectors-follower" /></label>
+      <label>CCR 인증 방식
+        <select id="ccrAuthMode">
+          <option value="apikey">API Key 인증 (기본)</option>
+          <option value="cert">TLS 인증서 기반 인증 (구 방식)</option>
+        </select>
+      </label>
+      <label>연결 모드
+        <select id="ccrConnectionMode">
+          <option value="proxy">Proxy</option>
+          <option value="sniff">Sniff (기본)</option>
+        </select>
+      </label>
+      <label id="extraSeedsField" style="display:none">추가 Seed 노드 (sniff, 콤마구분) <input id="extraSeeds" placeholder="172.21.133.180:9300,172.21.133.181:9300" /></label>
     </div>
-    <div class="step-buttons">
+
+    <div id="certAuthInfo" class="hint term-explain" style="display:none">
+      <strong>TLS 인증서 기반 인증</strong>은 API Key 발급 없이, 양쪽 클러스터의 transport 계층(포트 9300)이
+      같은 CA를 신뢰하도록 인증서를 미리 맞춰둬야 합니다 (<code>elasticsearch-certutil</code>로 CA/인증서를
+      발급해서 각 노드에 배포 — REST로는 자동화할 수 없는 수동 작업입니다). 준비되어 있다는 전제로
+      "③ Remote Cluster 등록"부터 바로 진행하시면 됩니다.
+    </div>
+
+    <div class="step-buttons" id="apiKeyStepsGroup">
       <button id="btnGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;주센터에 &quot;DR센터가 이 인덱스를 검색/복제할 수 있는&quot; 권한만 가진 전용 키를 발급합니다.">① API Key 발급</button>
       <button id="btnShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 실행할 수 없습니다.">② keystore 명령어 보기</button>
-      <button id="btnRegisterRemote" disabled data-tooltip="PUT /_cluster/settings&#10;DR센터에게 &quot;주센터가 어디 있는지&quot; 주소를 알려줍니다 (원격 클러스터 등록).">③ Remote Cluster 등록</button>
+    </div>
+    <div class="step-buttons">
+      <button id="btnRegisterRemote" data-tooltip="PUT /_cluster/settings&#10;DR센터에게 &quot;주센터가 어디 있는지&quot; 주소를 알려줍니다 (원격 클러스터 등록). Sniff/Proxy, 인증 방식에 따라 내용이 달라집니다.">③ Remote Cluster 등록</button>
       <button id="btnFollow" disabled data-tooltip="PUT /{인덱스}/_ccr/follow&#10;실제 복제를 시작합니다. 이 순간부터 주센터 데이터가 DR센터로 실시간 미러링됩니다.">④ Follower Index 생성</button>
     </div>
     <div id="keystoreBox" class="code-box" style="display:none"></div>
     <div id="registerRemoteDiag" class="diag-box" style="display:none"></div>
+
+    <hr />
+    <h3>Auto-follow 패턴 구성 (신규 인덱스 자동 복제)</h3>
+    <p class="hint">위 ③번에서 등록한 remote alias를 그대로 씁니다. 리더에 이 패턴에 맞는 인덱스가
+      <strong>새로 생성될 때마다</strong> 자동으로 팔로워가 만들어집니다. 지금 이미 존재하는 인덱스는
+      대상이 아닙니다 (기존 인덱스는 위 ④번으로 개별 follow 하세요).</p>
+    <div class="grid-form">
+      <label>패턴 이름 <input id="autoFollowName" value="rag-vectors-autofollow" /></label>
+      <label>Leader 인덱스 패턴(콤마구분) <input id="autoFollowLeaderPattern" value="rag-vectors-*" /></label>
+      <label>Follower 인덱스 이름 패턴 <input id="autoFollowFollowPattern" value="{{leader_index}}-follower" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnAutoFollowCreate" data-tooltip="PUT /_ccr/auto_follow/{패턴이름}&#10;리더에서 패턴에 맞는 인덱스가 새로 생기면 자동으로 팔로워 인덱스를 만들도록 등록합니다.">Auto-follow 생성</button>
+      <button id="btnAutoFollowStatus" data-tooltip="GET /_ccr/auto_follow/{패턴이름}&#10;등록된 패턴의 상태를 조회합니다.">상태 조회</button>
+      <button id="btnAutoFollowDelete" class="danger" data-tooltip="DELETE /_ccr/auto_follow/{패턴이름}&#10;자동 팔로우 패턴을 삭제합니다 (이미 만들어진 팔로워 인덱스는 그대로 유지됩니다).">패턴 삭제</button>
+    </div>
+    <pre id="autoFollowResult" class="code-box" style="display:none"></pre>
   </section>
 
   <!-- 4. 모니터링 -->
@@ -191,12 +228,33 @@
       <label>원 Primary(이제 follower가 될) 클러스터 <select id="failbackFollowerSelect"></select></label>
       <label>원 Primary 인덱스 <input id="failbackFollowerIndex" value="rag-vectors" /></label>
       <label>Remote alias(역방향) <input id="failbackAlias" value="cluster_b" /></label>
+      <label>CCR 인증 방식
+        <select id="failbackAuthMode">
+          <option value="apikey">API Key 인증 (기본)</option>
+          <option value="cert">TLS 인증서 기반 인증 (구 방식)</option>
+        </select>
+      </label>
+      <label>연결 모드
+        <select id="failbackConnectionMode">
+          <option value="proxy">Proxy</option>
+          <option value="sniff">Sniff (기본)</option>
+        </select>
+      </label>
+      <label id="failbackExtraSeedsField" style="display:none">추가 Seed 노드 (sniff, 콤마구분) <input id="failbackExtraSeeds" placeholder="172.21.18.100:9300,172.21.18.102:9300" /></label>
+    </div>
+    <div id="failbackCertAuthInfo" class="hint term-explain" style="display:none">
+      <strong>TLS 인증서 기반 인증</strong>은 API Key 발급 없이 진행합니다. 양쪽 클러스터 transport 계층(9300)이
+      같은 CA를 신뢰해야 합니다. 준비되어 있다면 ①번 다음 바로 ④번 "역방향 Remote 등록"으로 넘어가세요.
     </div>
     <div class="step-buttons">
       <button id="btnPrepareFailback" data-tooltip="DELETE /{인덱스}&#10;원래 주센터에 남아있던 예전 인덱스를 지웁니다. DR센터로부터 다시 데이터를 받을 자리를 비웁니다.">① 원 Primary 인덱스 삭제(재수신 준비)</button>
+    </div>
+    <div class="step-buttons" id="failbackApiKeyStepsGroup">
       <button id="btnFailbackGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;이번엔 반대로, 주센터가 DR센터 데이터를 가져올 수 있는 키를 DR센터에서 발급합니다.">② 역방향 API Key 발급</button>
       <button id="btnFailbackShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;원 Primary(이제 follower)의 각 노드에 키를 등록합니다.">③ keystore 명령어 보기</button>
-      <button id="btnFailbackRegisterRemote" disabled data-tooltip="PUT /_cluster/settings&#10;주센터에게 DR센터가 어디 있는지 알려줍니다 (역방향 원격 클러스터 등록).">④ 역방향 Remote 등록</button>
+    </div>
+    <div class="step-buttons">
+      <button id="btnFailbackRegisterRemote" data-tooltip="PUT /_cluster/settings&#10;주센터에게 DR센터가 어디 있는지 알려줍니다 (역방향 원격 클러스터 등록).">④ 역방향 Remote 등록</button>
       <button id="btnFailbackFollow" disabled data-tooltip="PUT /{인덱스}/_ccr/follow&#10;Failover 중 DR에 쌓인 데이터를 주센터로 복제해옵니다 (역방향).">⑤ 역방향 Follower 생성</button>
       <button id="btnFailbackUnfollow" data-tooltip="pause_follow → close → unfollow → open + remote 설정 제거&#10;역방향 연결을 끊고 주센터를 다시 독립 상태로 되돌립니다.">⑥ 역방향 해제(동기화 완료 후)</button>
     </div>
