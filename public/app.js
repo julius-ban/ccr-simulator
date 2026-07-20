@@ -3,9 +3,139 @@ const $ = (sel) => document.querySelector(sel);
 let clusters = [];
 let ccrLinks = [];
 let monitorTimer = null;
+let GUIDE_MODE = false;
+
+// ---------- 🧪 시뮬레이션 모드 ----------
+const SIM = { enabled: false, stats: {} };
+
+function shouldSimulate(method, path) {
+  return (
+    /^\/api\/clusters\/.+\/test$/.test(path) ||
+    path.startsWith('/api/ccr/') ||
+    path.startsWith('/api/dr/') ||
+    path === '/api/index-mgmt/sample-index'
+  );
+}
+
+function simDelay(ms = 450) {
+  return new Promise((r) => setTimeout(r, ms + Math.random() * 350));
+}
+
+async function mockApi(method, path, body = {}) {
+  await simDelay();
+
+  if (/^\/api\/clusters\/.+\/test$/.test(path)) {
+    return {
+      health: { ok: true, status: 200, path: '/_cluster/health', method: 'GET', response: { status: 'green', cluster_name: 'sim-cluster' } },
+      license: { ok: true, status: 200, path: '/_license', method: 'GET', response: { license: { type: 'trial', status: 'active' } } },
+    };
+  }
+
+  if (path === '/api/ccr/generate-api-key') {
+    return {
+      result: {
+        ok: true, status: 200, path: '/_security/cross_cluster/api_key', method: 'POST',
+        response: { id: 'sim-key-id', name: `ccr-${body.remoteAlias}-key`, encoded: btoa(`sim:${Date.now()}`) },
+      },
+      keystoreCommand: '(시뮬레이션 모드) 실제 keystore 명령 실행은 필요 없습니다. 실전 모드에서는 여기에 실제 명령어가 표시됩니다.',
+    };
+  }
+
+  if (path === '/api/ccr/register-remote') {
+    return {
+      settingsResult: { ok: true, status: 200, path: '/_cluster/settings', method: 'PUT', response: { acknowledged: true } },
+      remoteInfoResult: { ok: true, status: 200, path: '/_remote/info', method: 'GET', response: { [body.remoteAlias]: { connected: true, mode: 'proxy' } } },
+      portProbe: { reachable: true, tlsHandshake: true },
+      diagnosis: { level: 'ok', message: '(시뮬레이션) 정상적으로 연결되었습니다.' },
+    };
+  }
+
+  if (path === '/api/ccr/follow') {
+    const key = `${body.followerClusterId}:${body.followerIndex}`;
+    SIM.stats[key] = { opsWritten: 0, leaderCp: 0 };
+    upsertLocalLink({
+      leaderClusterId: body.leaderClusterId, followerClusterId: body.followerClusterId,
+      remoteAlias: body.remoteAlias, leaderIndex: body.leaderIndex, followerIndex: body.followerIndex,
+      direction: body.direction || 'primary-to-dr',
+    });
+    return {
+      result: {
+        ok: true, status: 200, path: `/${body.followerIndex}/_ccr/follow`, method: 'PUT',
+        response: { follow_index_created: true, follow_index_shards_acked: true, index_following_started: true },
+      },
+    };
+  }
+
+  if (/^\/api\/ccr\/stats\//.test(path)) {
+    const parts = path.split('/'); // /api/ccr/stats/:clusterId/:indexName
+    const clusterId = parts[4];
+    const indexName = parts[5];
+    const key = `${clusterId}:${indexName}`;
+    if (!SIM.stats[key]) SIM.stats[key] = { opsWritten: 0, leaderCp: 0 };
+    const s = SIM.stats[key];
+    // 리더가 계속 앞서가고, 팔로워가 서서히 따라잡는 모양을 흉내
+    s.leaderCp += Math.floor(Math.random() * 40) + 10;
+    const catchUp = Math.max(Math.floor((s.leaderCp - s.opsWritten) * 0.6), 5);
+    s.opsWritten = Math.min(s.opsWritten + catchUp, s.leaderCp);
+    return {
+      ok: true, status: 200, path, method: 'GET',
+      response: {
+        indices: [{
+          index: indexName,
+          shards: [{
+            leader_global_checkpoint: s.leaderCp,
+            follower_global_checkpoint: s.opsWritten,
+            operations_written: s.opsWritten,
+            fatal_exception: null,
+          }],
+        }],
+      },
+    };
+  }
+
+  if (path === '/api/dr/failover') {
+    markLocalUnfollowed(body.clusterId, body.indexName);
+    return {
+      log: [
+        { step: 'pause_follow', ok: true, status: 200, path: `/${body.indexName}/_ccr/pause_follow`, method: 'POST', response: {} },
+        { step: 'close', ok: true, status: 200, path: `/${body.indexName}/_close`, method: 'POST', response: { acknowledged: true } },
+        { step: 'unfollow', ok: true, status: 200, path: `/${body.indexName}/_ccr/unfollow`, method: 'POST', response: { acknowledged: true } },
+        { step: 'open', ok: true, status: 200, path: `/${body.indexName}/_open`, method: 'POST', response: { acknowledged: true } },
+      ],
+      aborted: false,
+    };
+  }
+
+  if (path === '/api/dr/prepare-failback') {
+    return { result: { ok: true, status: 200, path: `/${body.indexName}`, method: 'DELETE', response: { acknowledged: true } } };
+  }
+
+  if (path === '/api/ccr/remove-remote') {
+    removeLocalLink(body.clusterId, body.followerIndex);
+    return { result: { ok: true, status: 200, path: '/_cluster/settings', method: 'PUT', response: { acknowledged: true } } };
+  }
+
+  if (path === '/api/index-mgmt/sample-index') {
+    return {
+      log: [
+        { step: 'create_index', ok: true, status: 200, path: `/${body.indexName}`, method: 'PUT', response: { acknowledged: true, shards_acknowledged: true, index: body.indexName } },
+        { step: 'seed_summary', totalRequested: Number(body.seedDocs) || 0, totalInserted: Number(body.seedDocs) || 0 },
+      ],
+    };
+  }
+
+  if (path.startsWith('/api/verify/')) {
+    return { error: '시뮬레이션 모드에서는 검증(쿼리 비교) 기능은 지원하지 않습니다. 상단의 시뮬레이션 모드를 끄고 실제 클러스터로 확인해주세요.' };
+  }
+
+  return { ok: true, simulated: true };
+}
 
 // ---------- 공통 유틸 ----------
 async function api(method, path, body) {
+  if (SIM.enabled && shouldSimulate(method, path)) {
+    return mockApi(method, path, body);
+  }
   const res = await fetch(path, {
     method,
     headers: body ? { 'Content-Type': 'application/json' } : undefined,
@@ -34,6 +164,76 @@ function fillSelect(selectEl, list, placeholder) {
   });
 }
 
+// ---------- 🧭 가이드 모드 ----------
+const GUIDE_STEPS = [
+  'btnCreateSampleIndex',
+  'btnGenKey', 'btnShowKeystore', 'btnRegisterRemote', 'btnFollow',
+  'btnStartMonitor',
+  'btnFailover',
+  'btnPrepareFailback', 'btnFailbackGenKey', 'btnFailbackShowKeystore',
+  'btnFailbackRegisterRemote', 'btnFailbackFollow', 'btnFailbackUnfollow',
+];
+const guideCompleted = new Set();
+
+function markGuideStep(id) {
+  guideCompleted.add(id);
+  updateGuideHighlights();
+}
+
+function updateGuideHighlights() {
+  document.querySelectorAll('.guide-next, .guide-dimmed').forEach((el) => el.classList.remove('guide-next', 'guide-dimmed'));
+  if (!GUIDE_MODE) return;
+
+  if (clusters.length < 2) {
+    document.querySelector('#clusterForm button[type="submit"]')?.classList.add('guide-next');
+    GUIDE_STEPS.forEach((id) => $('#' + id)?.classList.add('guide-dimmed'));
+    return;
+  }
+  const nextIdx = GUIDE_STEPS.findIndex((id) => !guideCompleted.has(id));
+  GUIDE_STEPS.forEach((id, i) => {
+    const btn = $('#' + id);
+    if (!btn) return;
+    if (i === nextIdx) btn.classList.add('guide-next');
+    else if (nextIdx !== -1 && i > nextIdx) btn.classList.add('guide-dimmed');
+  });
+}
+
+$('#guideModeToggle').addEventListener('change', (e) => {
+  GUIDE_MODE = e.target.checked;
+  updateGuideHighlights();
+});
+
+$('#simModeToggle').addEventListener('change', (e) => {
+  SIM.enabled = e.target.checked;
+  $('#simModeBanner').style.display = SIM.enabled ? 'block' : 'none';
+});
+
+// ---------- 📖 용어집 ----------
+const GLOSSARY = [
+  ['CCR (Cross-Cluster Replication)', '한 클러스터(리더)의 인덱스를 다른 클러스터(팔로워)로 실시간에 가깝게 복제하는 Elasticsearch 기능입니다.'],
+  ['Leader / Follower', '리더는 원본 데이터를 가진 인덱스, 팔로워는 그걸 그대로 복제해서 따라가는 인덱스입니다. 팔로워는 follow 상태인 동안 직접 쓰기가 불가능합니다.'],
+  ['Remote Cluster', '내 클러스터가 아닌, CCR/CCS로 연결해서 데이터를 가져오는 다른 클러스터를 가리키는 용어입니다.'],
+  ['Proxy 모드', '팔로워의 모든 노드가 리더의 대표 진입점(프록시 주소) 하나로만 연결하는 방식입니다. Sniff 모드보다 방화벽 설정이 단순합니다.'],
+  ['API Key 인증', 'CCR 연결 시 인증서 기반 상호 신뢰 대신, 발급된 API Key로 권한을 제한해서 인증하는 최신 방식입니다.'],
+  ['Remote Cluster Server', 'API Key 인증 방식에서 원격 요청을 받아주는 전용 인터페이스로, 기본 포트는 9443입니다. 기본적으로 꺼져 있어서 켜야 합니다.'],
+  ['Checkpoint', '지금까지 안전하게 커밋된 마지막 오퍼레이션의 위치를 가리키는 지표로, 복제 진행 상황을 추적하는 데 씁니다.'],
+  ['복제 지연 (Lag)', '리더의 checkpoint와 팔로워의 checkpoint 차이로, 팔로워가 리더를 얼마나 따라가지 못하고 있는지를 나타냅니다.'],
+  ['Failover', '주센터 장애 시, DR센터를 독립적으로 쓰기 가능한 상태로 전환해서 서비스를 이어가는 것입니다.'],
+  ['Failback', '장애 복구 후 DR센터의 데이터를 다시 주센터로 되돌리고 원래 운영 형태로 복귀하는 것입니다.'],
+  ['Soft Delete', '문서를 즉시 지우지 않고 삭제 표시만 해서, CCR이 그 삭제 이력까지 팔로워에 정확히 복제할 수 있게 하는 기능입니다.'],
+  ['HNSW', '벡터 검색(kNN)을 빠르게 하기 위한 그래프 기반 근사 최근접 이웃 탐색 알고리즘입니다.'],
+  ['kNN (k-최근접 이웃)', '주어진 벡터와 가장 가까운 상위 K개의 벡터(문서)를 찾는 검색 방식입니다.'],
+];
+
+$('#btnOpenGlossary').addEventListener('click', () => {
+  $('#glossaryList').innerHTML = GLOSSARY.map(([t, d]) => `<dt>${t}</dt><dd>${d}</dd>`).join('');
+  $('#glossaryModal').style.display = 'flex';
+});
+$('#btnCloseGlossary').addEventListener('click', () => { $('#glossaryModal').style.display = 'none'; });
+$('#glossaryModal').addEventListener('click', (e) => {
+  if (e.target.id === 'glossaryModal') $('#glossaryModal').style.display = 'none';
+});
+
 // ---------- 1. 클러스터 등록 ----------
 async function loadClusters() {
   clusters = await api('GET', '/api/clusters');
@@ -41,8 +241,10 @@ async function loadClusters() {
   const allSelects = [
     '#leaderSelect', '#followerSelect', '#sampleIndexCluster',
     '#monitorCluster', '#drCluster', '#failbackFollowerSelect',
+    '#verifyClusterA', '#verifyClusterB',
   ];
   allSelects.forEach((sel) => fillSelect($(sel), clusters, '선택하세요'));
+  updateGuideHighlights();
 }
 
 function healthDotHtml(c) {
@@ -137,6 +339,7 @@ $('#btnGenKey').addEventListener('click', async () => {
     ccrState.keystoreCommand = keystoreCommand;
     $('#btnShowKeystore').disabled = false;
   }
+  markGuideStep('btnGenKey');
 });
 
 $('#btnShowKeystore').addEventListener('click', () => {
@@ -146,6 +349,7 @@ $('#btnShowKeystore').addEventListener('click', () => {
     '아래 명령어를 Follower 클러스터의 각 노드에서 실행한 뒤, ③ 버튼을 누르세요.\n\n' +
     (ccrState.keystoreCommand || '(발급된 명령어 없음)');
   $('#btnRegisterRemote').disabled = false;
+  markGuideStep('btnShowKeystore');
 });
 
 function renderDiag(elId, diag, portProbe) {
@@ -186,6 +390,7 @@ $('#btnRegisterRemote').addEventListener('click', async () => {
   if (result.settingsResult?.ok) {
     $('#btnFollow').disabled = false;
   }
+  markGuideStep('btnRegisterRemote');
 });
 
 $('#btnFollow').addEventListener('click', async () => {
@@ -200,6 +405,7 @@ $('#btnFollow').addEventListener('click', async () => {
     leaderClusterId, direction: 'primary-to-dr',
   });
   appendLog('④ Follower Index 생성', result);
+  markGuideStep('btnFollow');
 });
 
 // ---------- 3. 샘플 벡터 인덱스 ----------
@@ -217,7 +423,23 @@ $('#btnCreateSampleIndex').addEventListener('click', async () => {
     customBody: $('#sampleCustomBody').value.trim() || undefined,
   });
   appendLog('샘플 벡터 인덱스 생성', result);
+  markGuideStep('btnCreateSampleIndex');
 });
+
+function updateLagGauge(result) {
+  const box = $('#lagGaugeBox');
+  const shard = result?.response?.indices?.[0]?.shards?.[0];
+  if (!shard) { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const leaderCp = shard.leader_global_checkpoint ?? 0;
+  const followerCp = shard.follower_global_checkpoint ?? 0;
+  const lag = Math.max(leaderCp - followerCp, 0);
+  $('#lagValue').textContent = lag;
+  $('#lagOpsWritten').textContent = shard.operations_written ?? 0;
+  $('#lagLeaderCp').textContent = leaderCp;
+  $('#lagFollowerCp').textContent = followerCp;
+  $('#lagBarFill').style.width = `${Math.min((lag / 50) * 100, 100)}%`;
+}
 
 // ---------- 4. 모니터링 ----------
 $('#btnStartMonitor').addEventListener('click', () => {
@@ -229,9 +451,11 @@ $('#btnStartMonitor').addEventListener('click', () => {
   const tick = async () => {
     const result = await api('GET', `/api/ccr/stats/${clusterId}/${indexName}`);
     $('#monitorOutput').textContent = pretty(result);
+    updateLagGauge(result);
   };
   tick();
   monitorTimer = setInterval(tick, 5000);
+  markGuideStep('btnStartMonitor');
 });
 
 $('#btnStopMonitor').addEventListener('click', () => {
@@ -246,6 +470,7 @@ $('#btnFailover').addEventListener('click', async () => {
   const indexName = $('#drIndex').value;
   const result = await api('POST', '/api/dr/failover', { clusterId, indexName });
   appendLog('Failover 실행', result);
+  markGuideStep('btnFailover');
 });
 
 $('#btnPrepareFailback').addEventListener('click', async () => {
@@ -254,6 +479,7 @@ $('#btnPrepareFailback').addEventListener('click', async () => {
   const indexName = $('#failbackFollowerIndex').value;
   const result = await api('POST', '/api/dr/prepare-failback', { clusterId, indexName });
   appendLog('① Failback 준비 (인덱스 삭제)', result);
+  markGuideStep('btnPrepareFailback');
 });
 
 let failbackState = {};
@@ -273,11 +499,13 @@ $('#btnFailbackGenKey').addEventListener('click', async () => {
     failbackState.keystoreCommand = keystoreCommand;
     $('#btnFailbackShowKeystore').disabled = false;
   }
+  markGuideStep('btnFailbackGenKey');
 });
 
 $('#btnFailbackShowKeystore').addEventListener('click', () => {
   alert('아래 명령어를 원 Primary(이제 follower)의 각 노드에서 실행하세요:\n\n' + (failbackState.keystoreCommand || '(없음)'));
   $('#btnFailbackRegisterRemote').disabled = false;
+  markGuideStep('btnFailbackShowKeystore');
 });
 
 $('#btnFailbackRegisterRemote').addEventListener('click', async () => {
@@ -305,6 +533,7 @@ $('#btnFailbackRegisterRemote').addEventListener('click', async () => {
   btn.disabled = false;
   btn.textContent = originalText;
   if (result.settingsResult?.ok) $('#btnFailbackFollow').disabled = false;
+  markGuideStep('btnFailbackRegisterRemote');
 });
 
 $('#btnFailbackFollow').addEventListener('click', async () => {
@@ -319,6 +548,7 @@ $('#btnFailbackFollow').addEventListener('click', async () => {
     leaderClusterId: drClusterId, direction: 'dr-to-primary',
   });
   appendLog('⑤ 역방향 Follower 생성', result);
+  markGuideStep('btnFailbackFollow');
 });
 
 $('#btnFailbackUnfollow').addEventListener('click', async () => {
@@ -331,7 +561,81 @@ $('#btnFailbackUnfollow').addEventListener('click', async () => {
   appendLog('⑥-1 역방향 pause/close/unfollow/open', result);
   const removeResult = await api('POST', '/api/ccr/remove-remote', { clusterId, remoteAlias, followerIndex: indexName });
   appendLog('⑥-2 역방향 remote 설정 제거', removeResult);
+  markGuideStep('btnFailbackUnfollow');
 });
+
+// ---------- 6. 검증 ----------
+$('#btnIndexCheck').addEventListener('click', async () => {
+  const aId = $('#verifyClusterA').value, aIdx = $('#verifyIndexA').value;
+  const bId = $('#verifyClusterB').value, bIdx = $('#verifyIndexB').value;
+  if (!aId || !bId) return alert('A/B 클러스터를 선택하세요.');
+
+  const [a, b] = await Promise.all([
+    api('GET', `/api/verify/index-check/${aId}/${aIdx}`),
+    api('GET', `/api/verify/index-check/${bId}/${bIdx}`),
+  ]);
+  appendLog('인덱스 상태 확인', { a, b });
+  renderIndexCheck(a, b, aIdx, bIdx);
+});
+
+function renderIndexCheck(a, b, aIdx, bIdx) {
+  const box = $('#verifyResult');
+  box.style.display = 'block';
+  const rows = [
+    ['헬스', a.health?.response?.status || a.health?.response?.error || '-', b.health?.response?.status || b.health?.response?.error || '-'],
+    ['문서 수', a.count?.response?.count ?? '-', b.count?.response?.count ?? '-'],
+  ];
+  box.innerHTML = `
+    <table class="verify-table">
+      <tr><th></th><th>A (${aIdx})</th><th>B (${bIdx})</th></tr>
+      ${rows.map((r) => `<tr><td>${r[0]}</td><td>${r[1]}</td><td>${r[2]}</td></tr>`).join('')}
+    </table>`;
+}
+
+$('#btnCompareQuery').addEventListener('click', async () => {
+  const clusterAId = $('#verifyClusterA').value, indexA = $('#verifyIndexA').value;
+  const clusterBId = $('#verifyClusterB').value, indexB = $('#verifyIndexB').value;
+  const vectorField = $('#verifyVectorField').value;
+  const k = $('#verifyK').value;
+  if (!clusterAId || !clusterBId) return alert('A/B 클러스터를 선택하세요.');
+
+  const result = await api('POST', '/api/verify/compare-query', { clusterAId, indexA, clusterBId, indexB, vectorField, k });
+  appendLog('쿼리 결과 비교', result);
+  renderCompareResult(result, indexA, indexB);
+});
+
+function fmtScore(s) {
+  return typeof s === 'number' ? s.toFixed(4) : s;
+}
+
+function renderCompareResult(r, indexA, indexB) {
+  const box = $('#verifyResult');
+  box.style.display = 'block';
+
+  if (r.error) {
+    box.innerHTML = `<div class="verify-summary mismatch">${r.error}</div>`;
+    return;
+  }
+  if (!r.knnComparable) {
+    box.innerHTML = `
+      <div class="verify-summary ${r.countMatch ? 'match' : 'mismatch'}">
+        문서 수: A=${r.countA?.response?.count ?? '-'} / B=${r.countB?.response?.count ?? '-'} ${r.countMatch ? '✅ 일치' : '❌ 불일치'}<br/>
+        kNN 비교 불가: ${r.reason}
+      </div>`;
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="verify-summary ${r.overallMatch ? 'match' : 'mismatch'}">
+      ${r.overallMatch ? '✅ 리더/팔로워 쿼리 결과가 완전히 일치합니다.' : '⚠️ 차이가 있습니다.'}<br/>
+      문서 수: A=${r.countA?.response?.count ?? '-'} / B=${r.countB?.response?.count ?? '-'} (${r.countMatch ? '일치' : '불일치'}) ·
+      상위 ID 순서: ${r.idsMatch ? '일치' : '불일치'} · 최대 점수 차이: ${fmtScore(r.maxScoreDiff)}
+    </div>
+    <table class="verify-table">
+      <tr><th>#</th><th>A(${indexA}) _id (score)</th><th>B(${indexB}) _id (score)</th></tr>
+      ${r.hitsA.map((h, i) => `<tr><td>${i + 1}</td><td>${h.id} (${fmtScore(h.score)})</td><td>${r.hitsB[i] ? `${r.hitsB[i].id} (${fmtScore(r.hitsB[i].score)})` : '-'}</td></tr>`).join('')}
+    </table>`;
+}
 
 // ---------- 로그 ----------
 function appendLog(title, data) {
@@ -455,6 +759,28 @@ function applyState(state) {
   if (Array.isArray(state.links)) ccrLinks = state.links;
   renderArchDiagram();
   renderClusterList();
+  updateGuideHighlights();
+}
+
+// ---- 시뮬레이션 모드 전용: 백엔드 SSE 없이 프론트에서 직접 CCR 링크 상태를 바꿔서 다이어그램에 반영 ----
+function upsertLocalLink({ leaderClusterId, followerClusterId, remoteAlias, leaderIndex, followerIndex, direction }) {
+  const idx = ccrLinks.findIndex((l) => l.followerClusterId === followerClusterId && l.followerIndex === followerIndex);
+  const rec = {
+    id: `sim-${Date.now()}`, leaderClusterId, followerClusterId, remoteAlias, leaderIndex, followerIndex,
+    direction, status: 'linked', updatedAt: new Date().toISOString(),
+  };
+  if (idx >= 0) ccrLinks[idx] = rec; else ccrLinks.push(rec);
+  renderArchDiagram();
+}
+
+function markLocalUnfollowed(followerClusterId, followerIndex) {
+  const link = ccrLinks.find((l) => l.followerClusterId === followerClusterId && l.followerIndex === followerIndex);
+  if (link) { link.status = 'unfollowed'; renderArchDiagram(); }
+}
+
+function removeLocalLink(followerClusterId, followerIndex) {
+  ccrLinks = ccrLinks.filter((l) => !(l.followerClusterId === followerClusterId && l.followerIndex === followerIndex));
+  renderArchDiagram();
 }
 
 function pulseArch(clusterId) {

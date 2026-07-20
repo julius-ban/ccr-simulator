@@ -18,12 +18,29 @@ body {
 }
 
 header {
-  padding: 24px 32px;
+  padding: 18px 32px;
   background: #111827;
   color: white;
 }
+.header-top { display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
 header h1 { margin: 0 0 4px 0; font-size: 20px; }
 .subtitle { margin: 0; color: #9ca3af; font-size: 13px; }
+.header-controls { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.switch-label {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: #e5e7eb; cursor: pointer;
+  background: #1f2937; padding: 6px 10px; border-radius: 6px;
+}
+.switch-label input { cursor: pointer; }
+.sim-banner {
+  margin-top: 10px;
+  background: #422006;
+  color: #fed7aa;
+  border: 1px solid #c2410c;
+  border-radius: 6px;
+  padding: 8px 14px;
+  font-size: 12.5px;
+}
 
 .layout {
   max-width: 1280px;
@@ -253,3 +270,51 @@ details textarea {
   border-radius: 6px;
   padding: 8px;
 }
+
+/* ---- 용어집 모달 ---- */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(15,23,42,0.55);
+  display: flex; align-items: center; justify-content: center; z-index: 100;
+}
+.modal-box {
+  background: white; border-radius: 10px; padding: 20px 24px;
+  max-width: 560px; width: 90%; max-height: 80vh; overflow-y: auto;
+}
+.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.modal-header h3 { margin: 0; }
+.glossary-list dt { font-weight: 700; color: #1e293b; margin-top: 12px; font-size: 13.5px; }
+.glossary-list dt:first-child { margin-top: 0; }
+.glossary-list dd { margin: 4px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+
+/* ---- 검증 결과 (섹션 6) ---- */
+.verify-result { margin-top: 12px; font-size: 12.5px; }
+.verify-result .verify-summary {
+  display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 10px;
+  padding: 10px 14px; border-radius: 6px; background: #f8fafc; border: 1px solid var(--border);
+}
+.verify-result .verify-summary.match { background: #ecfdf3; border-color: #86efac; }
+.verify-result .verify-summary.mismatch { background: #fef2f2; border-color: #fca5a5; }
+.verify-table { width: 100%; border-collapse: collapse; margin-top: 8px; font-size: 12px; }
+.verify-table th, .verify-table td { border: 1px solid var(--border); padding: 5px 8px; text-align: left; }
+.verify-table th { background: #f1f5f9; }
+
+/* ---- 복제 지연(lag) 게이지 ---- */
+.lag-gauge-box { margin-top: 10px; padding: 12px 14px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; }
+.lag-gauge-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+.lag-label { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.lag-value { font-size: 15px; font-weight: 700; color: #1e293b; min-width: 30px; }
+.lag-bar-track { flex: 1; height: 10px; background: #e2e8f0; border-radius: 6px; overflow: hidden; }
+.lag-bar-fill { height: 100%; width: 0%; background: linear-gradient(90deg, #22c55e, #f59e0b, #ef4444); transition: width 0.4s ease; }
+.lag-stats-row { display: flex; gap: 18px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+
+/* ---- 가이드 모드 강조/흐림 ---- */
+.guide-next {
+  outline: 3px solid #f59e0b;
+  outline-offset: 2px;
+  animation: guidePulse 1.4s ease-in-out infinite;
+}
+@keyframes guidePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(245,158,11,0.5); }
+  50% { box-shadow: 0 0 0 6px rgba(245,158,11,0); }
+}
+.guide-dimmed { opacity: 0.35; filter: grayscale(40%); }

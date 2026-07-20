@@ -7,9 +7,38 @@
 </head>
 <body>
 <header>
-  <h1>ES CCR Failover / Failback 자동화 콘솔</h1>
-  <p class="subtitle">주센터 · DR센터 클러스터 등록부터 CCR 연동, Failover/Failback 실행까지</p>
+  <div class="header-top">
+    <div>
+      <h1>ES CCR Failover / Failback 자동화 콘솔</h1>
+      <p class="subtitle">주센터 · DR센터 클러스터 등록부터 CCR 연동, Failover/Failback 실행까지</p>
+    </div>
+    <div class="header-controls">
+      <label class="switch-label" title="켜면 CCR 관련 버튼들이 실제 클러스터를 호출하지 않고, 가짜(하지만 그럴듯한) 응답으로 동작합니다. 클러스터 없이 연습하거나, 위험한 조작을 안전하게 체험할 때 켜세요.">
+        <input type="checkbox" id="simModeToggle" />
+        🧪 시뮬레이션 모드
+      </label>
+      <label class="switch-label" title="켜면 지금 눌러야 할 다음 버튼이 강조되고, 아직 순서가 안 된 버튼은 흐려집니다.">
+        <input type="checkbox" id="guideModeToggle" />
+        🧭 가이드 모드
+      </label>
+      <button type="button" id="btnOpenGlossary" class="info-btn-alt">📖 용어집</button>
+    </div>
+  </div>
+  <div id="simModeBanner" class="sim-banner" style="display:none">
+    🧪 시뮬레이션 모드가 켜져 있습니다 — CCR 연동/모니터링/Failover/Failback 버튼은 실제 클러스터를 건드리지 않고 가짜 데이터로 동작합니다.
+  </div>
 </header>
+
+<!-- 용어집 모달 -->
+<div id="glossaryModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>📖 용어집</h3>
+      <button type="button" id="btnCloseGlossary" class="info-btn-alt">닫기</button>
+    </div>
+    <dl id="glossaryList" class="glossary-list"></dl>
+  </div>
+</div>
 
 <div class="layout">
 <main class="left-col">
@@ -165,6 +194,18 @@
         <li><code>GET /{인덱스}/_ccr/stats</code> — 복제 지연(lag), 지금까지 복제된 문서 수, 에러 여부 등을 5초 간격으로 조회합니다. 실제 데이터가 오가지는 않고 상태만 확인합니다.</li>
       </ul>
     </div>
+    <div id="lagGaugeBox" class="lag-gauge-box" style="display:none">
+      <div class="lag-gauge-row">
+        <span class="lag-label">복제 지연(lag)</span>
+        <span id="lagValue" class="lag-value">0</span>
+        <div class="lag-bar-track"><div id="lagBarFill" class="lag-bar-fill"></div></div>
+      </div>
+      <div class="lag-stats-row">
+        <span>복제된 오퍼레이션: <strong id="lagOpsWritten">0</strong></span>
+        <span>리더 checkpoint: <strong id="lagLeaderCp">-</strong></span>
+        <span>팔로워 checkpoint: <strong id="lagFollowerCp">-</strong></span>
+      </div>
+    </div>
     <pre id="monitorOutput" class="code-box"></pre>
   </section>
 
@@ -216,7 +257,26 @@
     <div id="failbackRegisterDiag" class="diag-box" style="display:none"></div>
   </section>
 
-  <!-- 6. 실행 로그는 우측 패널(실시간 이벤트 하단)로 이동 -->
+  <!-- 6. 검증 -->
+  <section class="card">
+    <h2>6. 검증 — 인덱스 상태 / 쿼리 결과 비교</h2>
+    <p class="hint">리더에서 실제 문서 1건을 가져와 그 벡터로 리더/팔로워 양쪽에 동일한 kNN 쿼리를 날려 비교합니다. 결과가 같으면 복제가 정확하다는 뜻입니다.</p>
+    <div class="grid-form">
+      <label>A (보통 리더) 클러스터 <select id="verifyClusterA"></select></label>
+      <label>A 인덱스 <input id="verifyIndexA" value="rag-vectors" /></label>
+      <label>B (보통 팔로워) 클러스터 <select id="verifyClusterB"></select></label>
+      <label>B 인덱스 <input id="verifyIndexB" value="rag-vectors-follower" /></label>
+      <label>벡터 필드명 <input id="verifyVectorField" value="embedding" /></label>
+      <label>K (상위 몇 개) <input id="verifyK" value="5" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnIndexCheck">인덱스 상태 확인</button>
+      <button id="btnCompareQuery">쿼리 결과 비교</button>
+    </div>
+    <div id="verifyResult" class="verify-result" style="display:none"></div>
+  </section>
+
+  <!-- 7. 실행 로그는 우측 패널(실시간 이벤트 하단)로 이동 -->
 
 </main>
 
