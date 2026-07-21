@@ -34,20 +34,26 @@ header h1 { margin: 0 0 4px 0; font-size: 20px; }
 .switch-label input { cursor: pointer; }
 
 .layout {
-  max-width: 1280px;
+  max-width: 1560px;
   margin: 24px auto;
   padding: 0 16px 60px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 340px;
+  grid-template-columns: 420px minmax(0, 1fr) 320px;
   gap: 20px;
   align-items: start;
 }
-.left-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
+.log-col { display: flex; flex-direction: column; gap: 20px; position: sticky; top: 20px; }
+.main-col { display: flex; flex-direction: column; gap: 20px; min-width: 0; }
 .right-col { display: flex; flex-direction: column; gap: 20px; position: sticky; top: 20px; }
 
+@media (max-width: 1280px) {
+  .layout { grid-template-columns: 360px minmax(0, 1fr); }
+  .right-col { grid-column: 1 / -1; position: static; }
+}
 @media (max-width: 980px) {
   .layout { grid-template-columns: 1fr; }
-  .right-col { position: static; }
+  .log-col { position: static; }
+  .right-col { grid-column: auto; position: static; }
 }
 
 .card {
@@ -56,8 +62,12 @@ header h1 { margin: 0 0 4px 0; font-size: 20px; }
   border-radius: 8px;
   padding: 20px 24px;
 }
-.right-col .card { padding: 16px 18px; }
+.log-col .card, .right-col .card { padding: 16px 18px; }
 .card h2 { margin-top: 0; font-size: 16px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+
+/* 좌측으로 옮긴 실행 로그/실시간 이벤트는 폭이 넓어진 만큼 더 넉넉하게 보여줌 */
+.log-wide { max-height: 460px; font-size: 12.5px; }
+.event-feed-wide { max-height: 460px; }
 
 .grid-form {
   display: grid;

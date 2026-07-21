@@ -51,6 +51,11 @@ function markGuideStep(id) {
   updateGuideHighlights();
 }
 
+function isVisible(el) {
+  // display:none인 조상이 있으면 offsetParent가 null이 됨 (표준적인 "화면에 안 보임" 판별법)
+  return !!(el && el.offsetParent !== null);
+}
+
 function updateGuideHighlights() {
   document.querySelectorAll('.guide-next, .guide-dimmed').forEach((el) => el.classList.remove('guide-next', 'guide-dimmed'));
   if (!GUIDE_MODE) return;
@@ -60,8 +65,12 @@ function updateGuideHighlights() {
     GUIDE_STEPS.forEach((id) => $('#' + id)?.classList.add('guide-dimmed'));
     return;
   }
-  const nextIdx = GUIDE_STEPS.findIndex((id) => !guideCompleted.has(id));
-  GUIDE_STEPS.forEach((id, i) => {
+
+  // 지금 화면에 안 보이는 단계(예: TLS 인증서 모드일 때 숨겨진 API Key 발급 버튼)는
+  // 순서 계산에서 아예 제외합니다 - 안 그러면 그 뒤의 실제로 보이는 버튼들이 계속 흐리게 남습니다.
+  const effectiveSteps = GUIDE_STEPS.filter((id) => isVisible($('#' + id)));
+  const nextIdx = effectiveSteps.findIndex((id) => !guideCompleted.has(id));
+  effectiveSteps.forEach((id, i) => {
     const btn = $('#' + id);
     if (!btn) return;
     if (i === nextIdx) btn.classList.add('guide-next');
@@ -93,6 +102,12 @@ $('#btnOpenGlossary').addEventListener('click', () => {
 $('#btnCloseGlossary').addEventListener('click', () => { $('#glossaryModal').style.display = 'none'; });
 $('#glossaryModal').addEventListener('click', (e) => {
   if (e.target.id === 'glossaryModal') $('#glossaryModal').style.display = 'none';
+});
+
+$('#btnResetAll').addEventListener('click', async () => {
+  if (!confirm('정말 모든 클러스터 등록/CCR 상태/실행 로그를 초기화하시겠습니까?\n되돌릴 수 없습니다.')) return;
+  await api('POST', '/api/reset');
+  location.reload();
 });
 
 // ---------- 1. 클러스터 등록 ----------
@@ -192,12 +207,14 @@ function wireAuthModeControls(authModeId, connModeId, extraSeedsFieldId, apiKeyS
       connSel.value = 'sniff'; // 인증서 인증 기본값은 Sniff
     }
     extraSeedsField.style.display = isCert && connSel.value === 'sniff' ? 'flex' : 'none';
+    updateGuideHighlights();
   }
 
   authSel.addEventListener('change', apply);
   connSel.addEventListener('change', () => {
     connSel.dataset.userSet = '1';
     extraSeedsField.style.display = authSel.value === 'cert' && connSel.value === 'sniff' ? 'flex' : 'none';
+    updateGuideHighlights();
   });
   apply();
 }

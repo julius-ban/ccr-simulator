@@ -14,6 +14,7 @@
     </div>
     <div class="header-controls">
       <button type="button" id="btnOpenGlossary" class="info-btn-alt">📖 용어집</button>
+      <button type="button" id="btnResetAll" class="danger">🔄 초기화</button>
     </div>
   </div>
 </header>
@@ -47,7 +48,23 @@
 </div>
 
 <div class="layout">
-<main class="left-col">
+
+<aside class="log-col">
+  <div class="card sticky-card">
+    <h2>실행 로그</h2>
+    <div class="step-buttons">
+      <button id="btnRefreshLog">로그 새로고침</button>
+      <button id="btnCopyLog" class="info-btn-alt">로그 복사</button>
+    </div>
+    <pre id="logOutput" class="code-box log-wide"></pre>
+  </div>
+  <div class="card sticky-card">
+    <h2>실시간 이벤트</h2>
+    <div id="eventFeed" class="event-feed event-feed-wide"></div>
+  </div>
+</aside>
+
+<main class="main-col">
 
   <!-- 1. 클러스터 등록 -->
   <section class="card">
@@ -133,27 +150,27 @@
       <label>Follower 인덱스 <input id="followerIndex" value="rag-vectors-follower" /></label>
       <label>CCR 인증 방식
         <select id="ccrAuthMode">
-          <option value="apikey">API Key 인증 (기본)</option>
-          <option value="cert">TLS 인증서 기반 인증 (구 방식)</option>
+          <option value="cert" selected>TLS 인증서 기반 인증 (~9.X)</option>
+          <option value="apikey">API Key 인증 (8.14 ~)</option>
         </select>
       </label>
       <label>연결 모드
         <select id="ccrConnectionMode">
-          <option value="proxy">Proxy</option>
           <option value="sniff">Sniff (기본)</option>
+          <option value="proxy">Proxy</option>
         </select>
       </label>
-      <label id="extraSeedsField" style="display:none">추가 Seed 노드 (sniff, 콤마구분) <input id="extraSeeds" placeholder="172.21.133.180:9300,172.21.133.181:9300" /></label>
+      <label id="extraSeedsField">추가 Seed 노드 (sniff, 콤마구분) <input id="extraSeeds" placeholder="172.21.133.180:9300,172.21.133.181:9300" /></label>
     </div>
 
-    <div id="certAuthInfo" class="hint term-explain" style="display:none">
+    <div id="certAuthInfo" class="hint term-explain">
       <strong>TLS 인증서 기반 인증</strong>은 API Key 발급 없이, 양쪽 클러스터의 transport 계층(포트 9300)이
       같은 CA를 신뢰하도록 인증서를 미리 맞춰둬야 합니다 (<code>elasticsearch-certutil</code>로 CA/인증서를
       발급해서 각 노드에 배포 — REST로는 자동화할 수 없는 수동 작업입니다). 준비되어 있다는 전제로
       "③ Remote Cluster 등록"부터 바로 진행하시면 됩니다.
     </div>
 
-    <div class="step-buttons" id="apiKeyStepsGroup">
+    <div class="step-buttons" id="apiKeyStepsGroup" style="display:none">
       <button id="btnGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;주센터에 &quot;DR센터가 이 인덱스를 검색/복제할 수 있는&quot; 권한만 가진 전용 키를 발급합니다.">① API Key 발급</button>
       <button id="btnShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;발급된 키를 DR센터 각 노드의 비밀 저장소에 등록합니다. OS 명령이라 REST로는 실행할 수 없습니다.">② keystore 명령어 보기</button>
     </div>
@@ -230,26 +247,26 @@
       <label>Remote alias(역방향) <input id="failbackAlias" value="cluster_b" /></label>
       <label>CCR 인증 방식
         <select id="failbackAuthMode">
-          <option value="apikey">API Key 인증 (기본)</option>
-          <option value="cert">TLS 인증서 기반 인증 (구 방식)</option>
+          <option value="cert" selected>TLS 인증서 기반 인증 (~9.X)</option>
+          <option value="apikey">API Key 인증 (8.14 ~)</option>
         </select>
       </label>
       <label>연결 모드
         <select id="failbackConnectionMode">
-          <option value="proxy">Proxy</option>
           <option value="sniff">Sniff (기본)</option>
+          <option value="proxy">Proxy</option>
         </select>
       </label>
-      <label id="failbackExtraSeedsField" style="display:none">추가 Seed 노드 (sniff, 콤마구분) <input id="failbackExtraSeeds" placeholder="172.21.18.100:9300,172.21.18.102:9300" /></label>
+      <label id="failbackExtraSeedsField">추가 Seed 노드 (sniff, 콤마구분) <input id="failbackExtraSeeds" placeholder="172.21.18.100:9300,172.21.18.102:9300" /></label>
     </div>
-    <div id="failbackCertAuthInfo" class="hint term-explain" style="display:none">
+    <div id="failbackCertAuthInfo" class="hint term-explain">
       <strong>TLS 인증서 기반 인증</strong>은 API Key 발급 없이 진행합니다. 양쪽 클러스터 transport 계층(9300)이
       같은 CA를 신뢰해야 합니다. 준비되어 있다면 ①번 다음 바로 ④번 "역방향 Remote 등록"으로 넘어가세요.
     </div>
     <div class="step-buttons">
       <button id="btnPrepareFailback" data-tooltip="DELETE /{인덱스}&#10;원래 주센터에 남아있던 예전 인덱스를 지웁니다. DR센터로부터 다시 데이터를 받을 자리를 비웁니다.">① 원 Primary 인덱스 삭제(재수신 준비)</button>
     </div>
-    <div class="step-buttons" id="failbackApiKeyStepsGroup">
+    <div class="step-buttons" id="failbackApiKeyStepsGroup" style="display:none">
       <button id="btnFailbackGenKey" data-tooltip="POST /_security/cross_cluster/api_key&#10;이번엔 반대로, 주센터가 DR센터 데이터를 가져올 수 있는 키를 DR센터에서 발급합니다.">② 역방향 API Key 발급</button>
       <button id="btnFailbackShowKeystore" disabled data-tooltip="(수동) elasticsearch-keystore add&#10;원 Primary(이제 follower)의 각 노드에 키를 등록합니다.">③ keystore 명령어 보기</button>
     </div>
@@ -280,8 +297,6 @@
     <div id="verifyResult" class="verify-result" style="display:none"></div>
   </section>
 
-  <!-- 7. 실행 로그는 우측 패널(실시간 이벤트 하단)로 이동 -->
-
 </main>
 
 <aside class="right-col">
@@ -296,18 +311,6 @@
       <div><span class="arrow-sample arrow-linked"></span> CCR 복제 중</div>
       <div><span class="arrow-sample arrow-broken"></span> 연결 끊김 / 독립 인덱스</div>
     </div>
-  </div>
-  <div class="card sticky-card">
-    <h2>실행 로그</h2>
-    <div class="step-buttons">
-      <button id="btnRefreshLog">로그 새로고침</button>
-      <button id="btnCopyLog" class="info-btn-alt">로그 복사</button>
-    </div>
-    <pre id="logOutput" class="code-box"></pre>
-  </div>
-  <div class="card sticky-card">
-    <h2>실시간 이벤트</h2>
-    <div id="eventFeed" class="event-feed"></div>
   </div>
 </aside>
 </div>

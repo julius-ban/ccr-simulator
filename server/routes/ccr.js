@@ -70,11 +70,22 @@ router.post('/generate-api-key', async (req, res) => {
  *  - apikey 인증: 항상 proxy 모드, remote_cluster_server 포트(보통 9443) 사용
  *  - cert 인증 + sniff: transport 포트(보통 9300)로 seeds 배열 구성 (여러 노드 필요)
  *  - cert 인증 + proxy: transport 포트로 단일 proxy_address 구성
+ *
+ * 중요: ES의 cluster.remote.<alias>.* 설정은 persistent라서, 같은 alias로 이전에
+ * 다른 모드(예: proxy)를 등록해둔 상태에서 이번에 seeds만 보내면 "이전에 설정된 mode"와
+ * 충돌해서 400 에러가 납니다 (mode는 한 번 명시되면 필드 유무만으로 안 바뀜).
+ * 그래서 매번 mode를 명시적으로 지정하고, 반대 모드에서만 쓰는 필드는 null로 명시적으로
+ * 지워서 이전 설정이 남아있어도 항상 깨끗하게 덮어써지도록 합니다.
  */
 function buildRemoteSettings({ authMode, connectionMode, leaderHost, leaderProxyPort, leaderTransportPort, extraSeeds, serverName }) {
   if (authMode !== 'cert') {
     return {
-      settings: { mode: 'proxy', proxy_address: `${leaderHost}:${leaderProxyPort}`, server_name: serverName || leaderHost },
+      settings: {
+        mode: 'proxy',
+        proxy_address: `${leaderHost}:${leaderProxyPort}`,
+        server_name: serverName || leaderHost,
+        seeds: null, // 이전에 sniff로 등록했었다면 남아있는 seeds를 명시적으로 제거
+      },
       probeHost: leaderHost,
       probePort: Number(leaderProxyPort) || 9443,
       resolvedMode: 'proxy',
@@ -84,14 +95,24 @@ function buildRemoteSettings({ authMode, connectionMode, leaderHost, leaderProxy
     const extra = String(extraSeeds || '').split(',').map((s) => s.trim()).filter(Boolean);
     const primarySeed = `${leaderHost}:${leaderTransportPort || 9300}`;
     return {
-      settings: { seeds: [primarySeed, ...extra] },
+      settings: {
+        mode: 'sniff',
+        seeds: [primarySeed, ...extra],
+        proxy_address: null, // 이전에 proxy로 등록했었다면 남아있는 proxy 설정을 명시적으로 제거
+        server_name: null,
+      },
       probeHost: leaderHost,
       probePort: Number(leaderTransportPort) || 9300,
       resolvedMode: 'sniff',
     };
   }
   return {
-    settings: { mode: 'proxy', proxy_address: `${leaderHost}:${leaderTransportPort || 9300}`, server_name: serverName || leaderHost },
+    settings: {
+      mode: 'proxy',
+      proxy_address: `${leaderHost}:${leaderTransportPort || 9300}`,
+      server_name: serverName || leaderHost,
+      seeds: null,
+    },
     probeHost: leaderHost,
     probePort: Number(leaderTransportPort) || 9300,
     resolvedMode: 'proxy',

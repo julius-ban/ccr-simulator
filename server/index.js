@@ -4,7 +4,7 @@ const express = require('express');
 const cors = require('cors');
 const { db } = require('./db');
 const { bus } = require('./eventBus');
-const { snapshot } = require('./stateBroadcast');
+const { snapshot, broadcastState } = require('./stateBroadcast');
 
 const clustersRouter = require('./routes/clusters');
 const ccrRouter = require('./routes/ccr');
@@ -31,6 +31,16 @@ app.get('/api/logs', (req, res) => {
 // 우측 아키텍처 다이어그램이 처음 로드될 때 이걸로 초기 렌더링을 합니다.
 app.get('/api/state', (req, res) => {
   res.json(snapshot());
+});
+
+// 전체 초기화 - 등록된 클러스터, 실행 로그, CCR 링크 상태를 전부 지우고 빈 상태로 되돌립니다.
+// 헤더의 "🔄 초기화" 버튼이 호출합니다. 되돌릴 수 없는 작업이라 프론트에서 확인창을 거칩니다.
+app.post('/api/reset', (req, res) => {
+  db.set('clusters', []).write();
+  db.set('actionLog', []).write();
+  db.set('ccrLinks', []).write();
+  broadcastState();
+  res.json({ ok: true });
 });
 
 // 실시간 스트림 - 두 종류의 이벤트를 함께 흘려보냅니다.
