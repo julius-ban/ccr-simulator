@@ -94,6 +94,10 @@ async function call(cluster, method, path, data, context = {}) {
     method,
     path,
     label: context.label || `${method} ${path}`,
+    // 실제 요청 바디도 함께 흘려보냄 - "설정 내보내기"가 이걸 그대로 캡처해서
+    // 폼 값으로 추측 재구성하지 않고 진짜 나간 요청을 export 할 수 있게 함.
+    // (인증정보는 body가 아니라 header/query에 있어서 여기 포함돼도 안전함)
+    body: data,
   };
 
   emitTraffic({ phase: 'start', ...base });

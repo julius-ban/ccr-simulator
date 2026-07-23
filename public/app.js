@@ -110,6 +110,113 @@ $('#btnResetAll').addEventListener('click', async () => {
   location.reload();
 });
 
+// ---------- 💾 시나리오 프리셋 ----------
+const PRESET_CLUSTER_FIELDS = [
+  'leaderSelect', 'followerSelect', 'drCluster', 'failbackFollowerSelect',
+  'sampleIndexCluster', 'verifyClusterA', 'verifyClusterB', 'monitorCluster',
+];
+const PRESET_PLAIN_FIELDS = [
+  'remoteAlias', 'leaderIndex', 'followerIndex', 'ccrAuthMode', 'ccrConnectionMode', 'extraSeeds',
+  'sampleIndexName', 'sampleDims', 'sampleSimilarity', 'sampleSeedDocs', 'sampleBatchSize', 'sampleOffset',
+  'monitorIndex', 'drIndex', 'failbackFollowerIndex', 'failbackAlias', 'failbackAuthMode', 'failbackConnectionMode', 'failbackExtraSeeds',
+  'autoFollowName', 'autoFollowLeaderPattern', 'autoFollowFollowPattern',
+  'bulkFollowIndexList', 'bulkFollowPattern',
+  'verifyIndexA', 'verifyIndexB', 'verifyVectorField', 'verifyK',
+];
+
+function captureCurrentSettingsSnapshot() {
+  const clusterFields = {};
+  PRESET_CLUSTER_FIELDS.forEach((id) => {
+    const el = $('#' + id);
+    if (!el || !el.value) return;
+    const c = clusters.find((cl) => cl.id === el.value);
+    if (c) clusterFields[id] = c.name; // ID가 아니라 이름으로 저장 (재등록 후에도 매칭되게)
+  });
+  const plainFields = {};
+  PRESET_PLAIN_FIELDS.forEach((id) => {
+    const el = $('#' + id);
+    if (el) plainFields[id] = el.value;
+  });
+  return { clusterFields, plainFields };
+}
+
+function applySettingsSnapshot(data) {
+  const notFound = [];
+  Object.entries(data.clusterFields || {}).forEach(([id, name]) => {
+    const el = $('#' + id);
+    if (!el) return;
+    const c = clusters.find((cl) => cl.name === name);
+    if (c) {
+      el.value = c.id;
+      el.dispatchEvent(new Event('change'));
+    } else {
+      notFound.push(`${id} → "${name}"`);
+    }
+  });
+  Object.entries(data.plainFields || {}).forEach(([id, value]) => {
+    const el = $('#' + id);
+    if (el) {
+      el.value = value;
+      el.dispatchEvent(new Event('change'));
+    }
+  });
+  if (notFound.length) {
+    alert('아래 클러스터를 현재 등록된 목록에서 찾지 못했습니다 (이름이 같은 클러스터를 다시 등록해주세요):\n' + notFound.join('\n'));
+  }
+}
+
+async function renderPresetsList() {
+  const presets = await api('GET', '/api/presets');
+  const box = $('#presetsList');
+  if (!presets.length) {
+    box.innerHTML = '<p class="hint">저장된 프리셋이 없습니다.</p>';
+    return;
+  }
+  box.innerHTML = presets.map((p) => `
+    <dt>${p.name}</dt>
+    <dd>
+      ${new Date(p.createdAt).toLocaleString()}
+      <div class="step-buttons" style="margin-top:6px">
+        <button type="button" data-load="${p.id}">불러오기</button>
+        <button type="button" data-del="${p.id}" class="danger">삭제</button>
+      </div>
+    </dd>
+  `).join('');
+
+  box.querySelectorAll('[data-load]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const preset = presets.find((p) => p.id === btn.dataset.load);
+      if (preset) applySettingsSnapshot(preset.data);
+      $('#presetsModal').style.display = 'none';
+    });
+  });
+  box.querySelectorAll('[data-del]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      if (!confirm('이 프리셋을 삭제하시겠습니까?')) return;
+      await api('DELETE', `/api/presets/${btn.dataset.del}`);
+      renderPresetsList();
+    });
+  });
+}
+
+$('#btnOpenPresets').addEventListener('click', () => {
+  $('#presetsModal').style.display = 'flex';
+  renderPresetsList();
+});
+$('#btnClosePresets').addEventListener('click', () => { $('#presetsModal').style.display = 'none'; });
+$('#presetsModal').addEventListener('click', (e) => {
+  if (e.target.id === 'presetsModal') $('#presetsModal').style.display = 'none';
+});
+
+$('#btnSavePreset').addEventListener('click', async () => {
+  const name = $('#presetNameInput').value.trim();
+  if (!name) return alert('프리셋 이름을 입력하세요.');
+  const data = captureCurrentSettingsSnapshot();
+  await api('POST', '/api/presets', { name, data });
+  $('#presetNameInput').value = '';
+  renderPresetsList();
+});
+
 // ---------- 1. 클러스터 등록 ----------
 async function loadClusters() {
   clusters = await api('GET', '/api/clusters');
@@ -236,6 +343,148 @@ $('#clusterForm').addEventListener('submit', async (e) => {
 // ---------- 2. CCR 연동 ----------
 let ccrState = {};
 
+// ---------- 📤 설정 내보내기 (실제 요청 이력 기반) ----------
+function triggerDownload(filename, text) {
+  const blob = new Blob([text], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+/**
+ * 내보내기에 포함할 "의미있는" 요청만 고릅니다 (읽기 전용 헬스체크/폴링/사전점검 조회는 제외).
+ * 인덱스 생성, remote 등록, follow, auto-follow, bulk, failover/failback 각 단계, 인덱스 삭제 등
+ * "실제로 클러스터 상태를 바꾼(또는 바꾸려고 시도한) 요청"만 남깁니다.
+ */
+function isExportableCall(method, path) {
+  const p = (path || '').toLowerCase();
+  if (p.includes('cross_cluster/api_key')) return true;
+  if (p.includes('_cluster/settings')) return true;
+  if (p.includes('_ccr/follow')) return true;
+  if (p.includes('_ccr/auto_follow')) return true;
+  if (p.includes('_ccr/pause_follow')) return true;
+  if (p.includes('_ccr/unfollow')) return true;
+  if (p.endsWith('/_close') || p.endsWith('/_open')) return true;
+  if (p.includes('_bulk')) return true;
+  if (method === 'PUT' && /^\/[^/]+$/.test(path)) return true; // 인덱스 생성 (PUT /인덱스명)
+  if (method === 'DELETE' && /^\/[^/]+$/.test(path)) return true; // 인덱스 삭제
+  return false;
+}
+
+function formatBodyForExport(body) {
+  if (body === undefined || body === null || body === '') return null;
+  let text;
+  if (typeof body === 'string') {
+    text = body.trim(); // _bulk의 NDJSON은 이미 문자열
+  } else {
+    text = JSON.stringify(body, null, 2);
+  }
+  const MAX = 3000;
+  if (text.length > MAX) {
+    text = text.slice(0, MAX) + `\n... (생략됨, 전체 ${text.length.toLocaleString()}자 중 앞부분만 표시)`;
+  }
+  return text;
+}
+
+function buildSessionExportMarkdown() {
+  const relevant = apiCallHistory.filter((c) => isExportableCall(c.method, c.path));
+  if (relevant.length === 0) return null;
+
+  const lines = [
+    '# CCR 세션 실행 이력 내보내기',
+    '',
+    `생성 시각: ${new Date().toLocaleString()}`,
+    '',
+    '이 문서는 폼 값을 추측해서 재구성한 게 아니라, **이번 세션에서 실제로 클러스터에 전송된 요청**을',
+    '실행 순서 그대로 캡처한 것입니다. 읽기 전용 조회(헬스체크/라이선스/모니터링 폴링/사전점검)는',
+    '제외하고, 실제로 상태를 바꾼 요청만 담았습니다.',
+    '',
+    '---',
+    '',
+  ];
+
+  relevant.forEach((c, i) => {
+    const bodyText = formatBodyForExport(c.body);
+    lines.push(`## ${i + 1}. ${c.label}`);
+    lines.push('');
+    lines.push(`- 시각: ${new Date(c.ts).toLocaleString()}`);
+    lines.push(`- 대상 클러스터: ${c.clusterName || '-'}${c.clusterRole ? ` (${c.clusterRole === 'primary' ? '주센터' : c.clusterRole === 'dr' ? 'DR센터' : c.clusterRole})` : ''}`);
+    lines.push(`- 결과: ${c.ok ? `✅ 성공 (HTTP ${c.status})` : `❌ 실패 (HTTP ${c.status})`}`);
+    lines.push('');
+    lines.push('```http');
+    lines.push(`${c.method} ${c.path}`);
+    lines.push('```');
+    if (bodyText) {
+      lines.push('');
+      lines.push('```json');
+      lines.push(bodyText);
+      lines.push('```');
+    }
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push('이 파일은 ES CCR Failover/Failback 가이드 콘솔에서 자동 생성되었습니다.');
+  return lines.join('\n');
+}
+
+$('#btnExportConfig').addEventListener('click', () => {
+  const md = buildSessionExportMarkdown();
+  if (!md) {
+    alert('아직 내보낼 실행 이력이 없습니다. CCR 연동/샘플 인덱스 등 단계를 먼저 몇 개 진행한 뒤 다시 눌러주세요.');
+    return;
+  }
+  triggerDownload(`ccr-session-export-${Date.now()}.md`, md);
+});
+
+// ---------- 🩺 사전 점검 (닥터) ----------
+function renderPrecheckResult(elId, data) {
+  const box = $(elId);
+  box.style.display = 'block';
+  if (data.error) {
+    box.innerHTML = `<div class="verify-summary mismatch">${data.error}</div>`;
+    return;
+  }
+  const icon = { pass: '✅', warn: '⚠️', fail: '❌' };
+  const overallClass = data.overall === 'pass' ? 'match' : 'mismatch';
+  box.innerHTML = `
+    <div class="verify-summary ${overallClass}">
+      ${icon[data.overall] || ''} 종합 결과: ${data.overall === 'pass' ? '모두 통과' : data.overall === 'warn' ? '주의 필요' : '문제 발견'}
+    </div>
+    <table class="verify-table">
+      <tr><th>항목</th><th>결과</th><th>내용</th></tr>
+      ${data.checks.map((c) => `<tr><td>${c.name}</td><td>${icon[c.status] || c.status}</td><td>${c.message}</td></tr>`).join('')}
+    </table>`;
+}
+
+$('#btnPrecheck').addEventListener('click', async () => {
+  const leaderClusterId = $('#leaderSelect').value;
+  const followerClusterId = $('#followerSelect').value;
+  if (!leaderClusterId || !followerClusterId) return alert('Leader/Follower 클러스터를 선택하세요.');
+
+  const btn = $('#btnPrecheck');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '점검 중...';
+
+  const result = await api('POST', '/api/ccr/precheck', {
+    leaderClusterId, followerClusterId,
+    leaderIndex: $('#leaderIndex').value,
+    remoteAlias: $('#remoteAlias').value,
+    authMode: $('#ccrAuthMode').value,
+  });
+  appendLog('🩺 사전 점검', result);
+  renderPrecheckResult('#precheckResult', result);
+
+  btn.disabled = false;
+  btn.textContent = originalText;
+});
+
 $('#btnGenKey').addEventListener('click', async () => {
   const leaderClusterId = $('#leaderSelect').value;
   const followerClusterId = $('#followerSelect').value;
@@ -322,6 +571,53 @@ $('#btnFollow').addEventListener('click', async () => {
   });
   appendLog('④ Follower Index 생성', result);
   markGuideStep('btnFollow');
+});
+
+// ---------- 다중 인덱스 일괄 Follow ----------
+$('#btnBulkFollow').addEventListener('click', async () => {
+  const followerClusterId = $('#followerSelect').value;
+  const leaderClusterId = $('#leaderSelect').value;
+  const remoteAlias = $('#remoteAlias').value;
+  if (!followerClusterId || !leaderClusterId) return alert('Leader/Follower 클러스터를 선택하세요.');
+
+  const raw = $('#bulkFollowIndexList').value;
+  const indexNames = raw.split(/[\n,]/).map((s) => s.trim()).filter(Boolean);
+  if (indexNames.length === 0) return alert('Leader 인덱스 목록을 입력하세요.');
+
+  const pattern = $('#bulkFollowPattern').value || '{{leader_index}}-follower';
+  const btn = $('#btnBulkFollow');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+
+  const box = $('#bulkFollowResult');
+  box.style.display = 'block';
+  const rows = indexNames.map((name) => ({ leaderIndex: name, followerIndex: pattern.replace('{{leader_index}}', name), status: '대기중' }));
+
+  const renderRows = () => {
+    box.innerHTML = `<table class="verify-table">
+      <tr><th>Leader 인덱스</th><th>Follower 인덱스</th><th>결과</th></tr>
+      ${rows.map((r) => `<tr><td>${r.leaderIndex}</td><td>${r.followerIndex}</td><td>${r.status}</td></tr>`).join('')}
+    </table>`;
+  };
+  renderRows();
+
+  for (let i = 0; i < rows.length; i++) {
+    btn.textContent = `실행 중... (${i + 1}/${rows.length})`;
+    rows[i].status = '⏳ 진행중';
+    renderRows();
+
+    const result = await api('POST', '/api/ccr/follow', {
+      followerClusterId, leaderClusterId, remoteAlias,
+      leaderIndex: rows[i].leaderIndex, followerIndex: rows[i].followerIndex,
+      direction: 'primary-to-dr',
+    });
+    rows[i].status = result.result?.ok ? '✅ 성공' : `❌ 실패: ${result.result?.response?.error?.reason || result.result?.response?.error || '알 수 없는 오류'}`;
+    appendLog(`일괄 Follow: ${rows[i].leaderIndex}`, result);
+    renderRows();
+  }
+
+  btn.disabled = false;
+  btn.textContent = originalText;
 });
 
 // ---------- Auto-follow 패턴 ----------
@@ -639,6 +935,7 @@ function appendLog(title, data) {
 }
 
 $('#btnRefreshLog').addEventListener('click', async () => {
+  $('#logOutput').textContent = ''; // 완전히 비우고 나서 새로 채움 (이전 내용 잔존 방지)
   const logs = await api('GET', '/api/logs');
   $('#logOutput').textContent = pretty(logs);
   $('#logOutput').scrollTop = 0;
@@ -770,6 +1067,10 @@ function pulseArch(clusterId) {
 // ---------- 실시간 이벤트 피드 ----------
 const feedItems = [];
 
+// ---------- 실제 API 요청 이력 (설정 내보내기가 이걸 그대로 사용) ----------
+const apiCallHistory = [];
+const API_CALL_HISTORY_MAX = 300;
+
 function renderFeed() {
   const box = $('#eventFeed');
   box.innerHTML = feedItems.slice(0, 40).map((it) => `
@@ -805,6 +1106,20 @@ function connectEventStream() {
       pulseArch(evt.clusterId);
       feedItems.unshift({ ts: evt.timestamp, clusterName: evt.clusterName, label: `${evt.label} (${evt.durationMs}ms)`, ok: evt.ok });
       renderFeed();
+
+      // 실제로 완료된 요청만 이력에 담음 (성공/실패 다 포함 - 실패도 "실제로 이렇게 요청했다"는 기록)
+      apiCallHistory.push({
+        ts: evt.timestamp,
+        clusterName: evt.clusterName,
+        clusterRole: evt.clusterRole,
+        label: evt.label,
+        method: evt.method,
+        path: evt.path,
+        body: evt.body,
+        ok: evt.ok,
+        status: evt.status,
+      });
+      if (apiCallHistory.length > API_CALL_HISTORY_MAX) apiCallHistory.shift();
     }
   });
 }

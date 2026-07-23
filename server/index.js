@@ -11,6 +11,7 @@ const ccrRouter = require('./routes/ccr');
 const indexMgmtRouter = require('./routes/index-mgmt');
 const failoverRouter = require('./routes/failover');
 const verifyRouter = require('./routes/verify');
+const presetsRouter = require('./routes/presets');
 
 const app = express();
 app.use(cors());
@@ -21,6 +22,7 @@ app.use('/api/ccr', ccrRouter);
 app.use('/api/index-mgmt', indexMgmtRouter);
 app.use('/api/dr', failoverRouter);
 app.use('/api/verify', verifyRouter);
+app.use('/api/presets', presetsRouter);
 
 app.get('/api/logs', (req, res) => {
   const logs = db.get('actionLog').takeRight ? db.get('actionLog').value() : db.get('actionLog').value();

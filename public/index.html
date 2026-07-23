@@ -14,6 +14,8 @@
     </div>
     <div class="header-controls">
       <button type="button" id="btnOpenGlossary" class="info-btn-alt">📖 용어집</button>
+      <button type="button" id="btnOpenPresets" class="info-btn-alt">💾 프리셋</button>
+      <button type="button" id="btnExportConfig" class="info-btn-alt" data-tooltip="이번 세션에서 실제로 클러스터에 전송된 요청(메서드/경로/바디)을 순서대로 캡처해서 Markdown 파일로 내려받습니다. 폼 값 추측이 아니라 진짜 실행 이력입니다.">📤 설정 내보내기</button>
       <button type="button" id="btnResetAll" class="danger">🔄 초기화</button>
     </div>
   </div>
@@ -44,6 +46,22 @@
     </div>
     <div id="indexApiTab" class="tab-panel"></div>
     <div id="bulkApiTab" class="tab-panel" style="display:none"></div>
+  </div>
+</div>
+
+<!-- 시나리오 프리셋 모달 -->
+<div id="presetsModal" class="modal-overlay" style="display:none">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h3>💾 시나리오 프리셋</h3>
+      <button type="button" id="btnClosePresets" class="info-btn-alt">닫기</button>
+    </div>
+    <p class="hint">지금 화면에 입력된 클러스터 선택/인덱스명/인증 방식 등을 이름 붙여 저장해두고 나중에 그대로 불러올 수 있습니다. 클러스터는 ID가 아니라 이름으로 저장되어서, 초기화 후 클러스터를 다시 등록해도 이름이 같으면 자동으로 매칭됩니다.</p>
+    <div class="step-buttons">
+      <input id="presetNameInput" placeholder="프리셋 이름 (예: NH은행 정방향 CCR)" style="flex:1;min-width:200px" />
+      <button type="button" id="btnSavePreset">현재 설정 저장</button>
+    </div>
+    <div id="presetsList" class="glossary-list" style="margin-top:14px"></div>
   </div>
 </div>
 
@@ -163,6 +181,11 @@
       <label id="extraSeedsField">추가 Seed 노드 (sniff, 콤마구분) <input id="extraSeeds" placeholder="172.21.133.180:9300,172.21.133.181:9300" /></label>
     </div>
 
+    <div class="step-buttons">
+      <button type="button" id="btnPrecheck" class="info-btn-alt" data-tooltip="라이선스, 버전 호환성, soft_deletes, remote_cluster_client 역할, remote_cluster_server 설정, 기존 credential 충돌 여부를 REST로 한 번에 점검합니다.">🩺 사전 점검 (닥터)</button>
+    </div>
+    <div id="precheckResult" class="verify-result" style="display:none"></div>
+
     <div id="certAuthInfo" class="hint term-explain">
       <strong>TLS 인증서 기반 인증</strong>은 API Key 발급 없이, 양쪽 클러스터의 transport 계층(포트 9300)이
       같은 CA를 신뢰하도록 인증서를 미리 맞춰둬야 합니다 (<code>elasticsearch-certutil</code>로 CA/인증서를
@@ -182,10 +205,24 @@
     <div id="registerRemoteDiag" class="diag-box" style="display:none"></div>
 
     <hr />
+    <h3>다중 인덱스 일괄 Follow</h3>
+    <p class="hint">이미 존재하는 인덱스 여러 개를 한 번에 follow합니다. 위 ③번 Remote 등록이 먼저 되어 있어야 합니다.</p>
+    <div class="grid-form">
+      <label style="grid-column: 1 / -1">Leader 인덱스 목록 (줄바꿈 또는 콤마 구분)
+        <textarea id="bulkFollowIndexList" rows="3" placeholder="rag-vectors-2024&#10;rag-vectors-2025&#10;rag-vectors-archive"></textarea>
+      </label>
+      <label>Follower 인덱스 이름 패턴 <input id="bulkFollowPattern" value="{{leader_index}}-follower" /></label>
+    </div>
+    <div class="step-buttons">
+      <button id="btnBulkFollow" data-tooltip="목록의 각 인덱스에 대해 PUT /{인덱스}/_ccr/follow를 순서대로 호출합니다.">일괄 Follow 실행</button>
+    </div>
+    <div id="bulkFollowResult" class="verify-result" style="display:none"></div>
+
+    <hr />
     <h3>Auto-follow 패턴 구성 (신규 인덱스 자동 복제)</h3>
     <p class="hint">위 ③번에서 등록한 remote alias를 그대로 씁니다. 리더에 이 패턴에 맞는 인덱스가
       <strong>새로 생성될 때마다</strong> 자동으로 팔로워가 만들어집니다. 지금 이미 존재하는 인덱스는
-      대상이 아닙니다 (기존 인덱스는 위 ④번으로 개별 follow 하세요).</p>
+      대상이 아닙니다 (기존 인덱스는 위 ④번 또는 "다중 인덱스 일괄 Follow"로 개별/일괄 follow 하세요).</p>
     <div class="grid-form">
       <label>패턴 이름 <input id="autoFollowName" value="rag-vectors-autofollow" /></label>
       <label>Leader 인덱스 패턴(콤마구분) <input id="autoFollowLeaderPattern" value="rag-vectors-*" /></label>

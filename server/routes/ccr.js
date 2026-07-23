@@ -14,6 +14,130 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+/** "9.4.3" vs "9.4.1" 같은 버전 문자열 비교. a > b면 양수, a < b면 음수, 같으면 0 */
+function compareVersions(a, b) {
+  const pa = String(a || '0').split('.').map(Number);
+  const pb = String(b || '0').split('.').map(Number);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = pa[i] || 0;
+    const nb = pb[i] || 0;
+    if (na !== nb) return na - nb;
+  }
+  return 0;
+}
+
+/**
+ * 사전 점검("닥터") — CCR 연동을 시작하기 전에 REST로 확인 가능한 항목들을 한 번에 점검합니다.
+ * body: { leaderClusterId, followerClusterId, leaderIndex, remoteAlias, authMode }
+ * 리더/팔로워 라이선스, 버전 호환성, soft_deletes, 팔로워의 remote_cluster_client 역할,
+ * (API Key 인증이면) 리더의 remote_cluster_server 활성화 여부, 기존 remote 설정에 leftover
+ * credential이 남아있는지를 확인합니다.
+ */
+router.post('/precheck', async (req, res) => {
+  const { leaderClusterId, followerClusterId, leaderIndex, remoteAlias, authMode } = req.body;
+  const leader = getCluster(leaderClusterId);
+  const follower = getCluster(followerClusterId);
+  if (!leader || !follower) return res.status(404).json({ error: 'leader/follower cluster not found' });
+
+  const checks = [];
+
+  // 1. 라이선스 (양쪽)
+  for (const [label, cluster] of [['리더', leader], ['팔로워', follower]]) {
+    const lic = await call(cluster, 'GET', '/_license', undefined, { label: `[사전점검] ${label} 라이선스 확인` });
+    const type = lic.response?.license?.type;
+    checks.push({
+      name: `${label} 라이선스`,
+      status: lic.ok ? (type && type !== 'basic' ? 'pass' : 'fail') : 'warn',
+      message: lic.ok
+        ? `현재 라이선스: ${type}${type === 'basic' ? ' — CCR은 Basic에서 지원되지 않습니다. Trial/Platinum/Enterprise로 전환하세요.' : ''}`
+        : `라이선스 조회 실패 (연결 자체를 확인하세요): ${JSON.stringify(lic.response)}`,
+    });
+  }
+
+  // 2. 버전 호환성 (팔로워는 리더와 같거나 더 높은 버전이어야 함)
+  const leaderInfo = await call(leader, 'GET', '/', undefined, { label: '[사전점검] 리더 버전 확인' });
+  const followerInfo = await call(follower, 'GET', '/', undefined, { label: '[사전점검] 팔로워 버전 확인' });
+  const leaderVersion = leaderInfo.response?.version?.number;
+  const followerVersion = followerInfo.response?.version?.number;
+  let versionStatus = 'warn';
+  let versionMsg = '버전 정보를 가져오지 못했습니다 (연결 상태를 먼저 확인하세요).';
+  if (leaderVersion && followerVersion) {
+    const cmp = compareVersions(followerVersion, leaderVersion);
+    versionStatus = cmp >= 0 ? 'pass' : 'fail';
+    versionMsg = `리더 ${leaderVersion} / 팔로워 ${followerVersion}` +
+      (cmp < 0 ? ' — 팔로워가 리더보다 낮은 버전이면 CCR이 동작하지 않습니다. 팔로워는 리더와 같거나 더 높은 버전이어야 합니다.' : ' (정상)');
+  }
+  checks.push({ name: '버전 호환성 (팔로워 ≥ 리더)', status: versionStatus, message: versionMsg });
+
+  // 3. 리더 인덱스의 soft_deletes.enabled (인덱스 지정된 경우만 - 생성 후에만 확인 가능, 변경 불가한 설정)
+  if (leaderIndex) {
+    const settings = await call(leader, 'GET', `/${leaderIndex}/_settings`, undefined, { label: `[사전점검] 리더 인덱스(${leaderIndex}) soft_deletes 확인` });
+    const idxKey = settings.ok ? Object.keys(settings.response || {})[0] : null;
+    const softDeletes = idxKey ? settings.response[idxKey]?.settings?.index?.soft_deletes?.enabled : undefined;
+    checks.push({
+      name: `리더 인덱스(${leaderIndex}) soft_deletes`,
+      status: settings.ok ? (softDeletes === 'false' ? 'fail' : 'pass') : 'warn',
+      message: settings.ok
+        ? (softDeletes === 'false'
+          ? 'soft_deletes.enabled이 false입니다 — 이 인덱스는 CCR 대상이 될 수 없습니다 (생성 시에만 정해지는 설정이라 변경 불가, 재생성 필요).'
+          : 'soft_deletes 활성화됨 (기본값, 정상입니다).')
+        : `인덱스 설정 조회 실패 — 아직 인덱스가 없을 수 있습니다: ${JSON.stringify(settings.response)}`,
+    });
+  }
+
+  // 4. 팔로워에 remote_cluster_client 역할을 가진 노드가 있는지
+  const followerNodes = await call(follower, 'GET', '/_nodes', undefined, { label: '[사전점검] 팔로워 노드 역할 확인' });
+  const followerNodesObj = followerNodes.response?.nodes || {};
+  const hasRcc = Object.values(followerNodesObj).some((n) => Array.isArray(n.roles) && n.roles.includes('remote_cluster_client'));
+  checks.push({
+    name: '팔로워 remote_cluster_client 역할',
+    status: followerNodes.ok ? (hasRcc ? 'pass' : 'fail') : 'warn',
+    message: followerNodes.ok
+      ? (hasRcc ? '최소 1개 노드가 remote_cluster_client 역할을 가지고 있습니다.' : '어떤 노드도 remote_cluster_client 역할이 없습니다 — CCR 연결 자체가 불가능합니다. node.roles에 추가하고 노드를 재시작하세요.')
+      : `노드 정보 조회 실패: ${JSON.stringify(followerNodes.response)}`,
+  });
+
+  // 5. (API Key 인증인 경우만) 리더에 remote_cluster_server가 켜져 있는지
+  if (authMode !== 'cert') {
+    const leaderSettings = await call(leader, 'GET', '/_nodes/settings', undefined, { label: '[사전점검] 리더 remote_cluster_server 설정 확인' });
+    const leaderNodesObj = leaderSettings.response?.nodes || {};
+    const anyEnabled = Object.values(leaderNodesObj).some((n) => {
+      const v = n.settings?.remote_cluster_server?.enabled;
+      return v === 'true' || v === true;
+    });
+    checks.push({
+      name: '리더 remote_cluster_server.enabled (API Key 인증용)',
+      status: leaderSettings.ok ? (anyEnabled ? 'pass' : 'fail') : 'warn',
+      message: leaderSettings.ok
+        ? (anyEnabled
+          ? 'remote_cluster_server가 최소 1개 노드에서 활성화되어 있습니다.'
+          : '어떤 노드에서도 remote_cluster_server.enabled가 확인되지 않습니다 — API Key 인증을 쓰려면 리더 노드에 이 설정을 켜고 재시작해야 합니다.')
+        : `노드 설정 조회 실패: ${JSON.stringify(leaderSettings.response)}`,
+    });
+  }
+
+  // 6. 기존 remote 설정에 leftover credential이 남아있는지 (인증 방식 전환 시 흔한 함정)
+  if (remoteAlias) {
+    const remoteInfo = await call(follower, 'GET', '/_remote/info', undefined, { label: `[사전점검] 기존 remote 설정 확인 (${remoteAlias})` });
+    const existing = remoteInfo.response?.[remoteAlias];
+    const hasCredential = !!existing?.cluster_credentials;
+    let status = 'pass';
+    let message = existing
+      ? `기존에 이 alias로 등록된 설정이 있습니다 (mode: ${existing.mode}, connected: ${existing.connected}).`
+      : '이 alias로 등록된 기존 설정이 없습니다 (새로 등록됩니다).';
+    if (hasCredential && authMode === 'cert') {
+      status = 'fail';
+      message = `이 alias(${remoteAlias})에 API Key credential이 keystore에 남아있는데, 지금 TLS 인증서 인증으로 전환하려 합니다 — 충돌해서 연결이 안 됩니다. 팔로워 노드에서 ` +
+        `"elasticsearch-keystore remove cluster.remote.${remoteAlias}.credentials" 실행 후 reload_secure_settings 하세요.`;
+    }
+    checks.push({ name: `기존 remote 설정 확인 (${remoteAlias})`, status, message });
+  }
+
+  const overall = checks.some((c) => c.status === 'fail') ? 'fail' : checks.some((c) => c.status === 'warn') ? 'warn' : 'pass';
+  addLog({ action: 'precheck', clusterId: followerClusterId, detail: { leaderClusterId, overall } });
+  res.json({ checks, overall });
+});
+
 /**
  * 1단계: 리더 클러스터에서 Cross-Cluster API Key 발급
  * body: { leaderClusterId, remoteAlias, leaderIndex, followerClusterId }
@@ -269,8 +393,25 @@ router.post('/remove-remote', async (req, res) => {
   const cluster = getCluster(clusterId);
   if (!cluster) return res.status(404).json({ error: 'cluster not found' });
 
+  // 주의: "cluster.remote.<alias>"는 그 자체로 등록된 설정 이름이 아니라
+  // mode/seeds/proxy_address 같은 leaf 설정들의 묶음입니다. 그래서 alias 전체를
+  // 통째로 null 하면 "not recognized" 에러가 납니다 (leaf 설정 이름이 아니라서).
+  // proxy든 sniff든 어느 모드로 등록되어 있었는지 몰라도 안전하게 지워지도록,
+  // 등록 시 쓸 수 있는 필드를 전부 개별적으로 null 처리합니다.
   const result = await call(cluster, 'PUT', '/_cluster/settings', {
-    persistent: { cluster: { remote: { [remoteAlias]: null } } },
+    persistent: {
+      cluster: {
+        remote: {
+          [remoteAlias]: {
+            mode: null,
+            seeds: null,
+            proxy_address: null,
+            server_name: null,
+            skip_unavailable: null,
+          },
+        },
+      },
+    },
   }, { label: `Remote Cluster 설정 제거 (${remoteAlias})` });
 
   addLog({ action: 'remove_remote_cluster', clusterId, detail: { remoteAlias, ok: result.ok } });
