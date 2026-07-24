@@ -86,11 +86,17 @@ function buildClient(cluster) {
 async function call(cluster, method, path, data, context = {}) {
   const client = buildClient(cluster);
   const requestId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const protocol = cluster.protocol === 'http' ? 'http' : 'https';
   const base = {
     requestId,
     clusterId: cluster.id,
     clusterName: cluster.name,
     clusterRole: cluster.role,
+    // 실제로 요청이 나간 주소 - "설정 내보내기"에서 대상 클러스터 이름뿐 아니라
+    // 진짜 접속 주소(host:port)까지 보여주기 위함.
+    host: cluster.host,
+    protocol,
+    restPort: cluster.restPort,
     method,
     path,
     label: context.label || `${method} ${path}`,

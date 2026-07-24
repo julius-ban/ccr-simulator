@@ -94,17 +94,17 @@ unfollow 성공 시 `unfollowed`로 전환).
 그대로 재사용하도록 바꿨습니다 — **폼 값 재구성이 아니라 진짜 실행 이력**입니다.
 
 - 백엔드: `server/esClient.js`의 `call()`이 SSE `traffic` 이벤트에 요청 메서드/경로뿐 아니라
-  **요청 바디까지** 함께 흘려보냅니다 (`base.body = data`). 인증정보는 body가 아니라 header에
-  있어서 노출되지 않습니다.
+  **요청 바디와 실제 접속 주소(protocol/host/restPort)까지** 함께 흘려보냅니다 (`base.body = data`,
+  `base.host/protocol/restPort`). 인증정보는 body가 아니라 header에 있어서 노출되지 않습니다.
 - 프론트: `app.js`가 SSE `traffic`의 `end` 이벤트를 받을 때마다 `apiCallHistory` 배열에
   {시각, 클러스터, 메서드, 경로, 바디, 성공여부}를 계속 쌓아둡니다 (최근 300개까지).
 - 내보내기 버튼을 누르면 이 이력 중 **실제로 상태를 바꾼 요청만** 골라냅니다 — 인덱스 생성/삭제,
   Remote Cluster 등록, API Key 발급, follow/auto-follow/unfollow, failover의 pause_follow →
   close → unfollow → open, `_bulk` 삽입 등. 헬스체크·라이선스 확인·모니터링 폴링·사전점검 조회
   같은 읽기 전용 호출은 자동으로 제외됩니다 (`isExportableCall()`).
-- 각 단계는 번호가 매겨진 섹션으로, ` ```http ` 블록(메서드+경로)과 ` ```json ` 블록(실제 바디,
-  성공/실패 여부 포함)으로 예쁘게 정리됩니다. `_bulk`처럼 바디가 큰 경우 3000자에서 잘라서
-  파일이 과도하게 커지지 않게 합니다.
+- 각 단계는 번호가 매겨진 섹션으로, "요청 주소"(`https://host:port`) 라인과 함께 ` ```http ` 블록
+  (메서드 + 전체 URL)과 ` ```json ` 블록(실제 바디, 성공/실패 여부 포함)으로 예쁘게 정리됩니다.
+  `_bulk`처럼 바디가 큰 경우 3000자에서 잘라서 파일이 과도하게 커지지 않게 합니다.
 - 세션 중 아무 것도 실행한 게 없으면 "먼저 몇 단계 진행해보라"는 안내만 뜨고 다운로드는 안 됩니다.
 
 이제 CCR 연동뿐 아니라 샘플 인덱스 생성, Failover, Failback, Auto-follow, 다중 인덱스 일괄 Follow

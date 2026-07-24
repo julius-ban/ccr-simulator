@@ -410,14 +410,17 @@ function buildSessionExportMarkdown() {
 
   relevant.forEach((c, i) => {
     const bodyText = formatBodyForExport(c.body);
+    const baseUrl = c.host ? `${c.protocol || 'https'}://${c.host}:${c.restPort || '?'}` : null;
+    const fullUrl = baseUrl ? `${baseUrl}${c.path}` : c.path;
     lines.push(`## ${i + 1}. ${c.label}`);
     lines.push('');
     lines.push(`- 시각: ${new Date(c.ts).toLocaleString()}`);
     lines.push(`- 대상 클러스터: ${c.clusterName || '-'}${c.clusterRole ? ` (${c.clusterRole === 'primary' ? '주센터' : c.clusterRole === 'dr' ? 'DR센터' : c.clusterRole})` : ''}`);
+    if (baseUrl) lines.push(`- 요청 주소: ${baseUrl}`);
     lines.push(`- 결과: ${c.ok ? `✅ 성공 (HTTP ${c.status})` : `❌ 실패 (HTTP ${c.status})`}`);
     lines.push('');
     lines.push('```http');
-    lines.push(`${c.method} ${c.path}`);
+    lines.push(`${c.method} ${fullUrl}`);
     lines.push('```');
     if (bodyText) {
       lines.push('');
@@ -1112,6 +1115,9 @@ function connectEventStream() {
         ts: evt.timestamp,
         clusterName: evt.clusterName,
         clusterRole: evt.clusterRole,
+        host: evt.host,
+        protocol: evt.protocol,
+        restPort: evt.restPort,
         label: evt.label,
         method: evt.method,
         path: evt.path,
