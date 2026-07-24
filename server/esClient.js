@@ -71,6 +71,13 @@ function buildClient(cluster) {
     httpsAgent,
     timeout: 30000,
     validateStatus: () => true, // 에러 응답도 우리가 직접 판단해서 처리
+    // 예전엔 여기 proxy:false를 강제로 넣었었는데, 실제로는 정반대 문제가 있는 사내망도
+    // 있다는 걸 확인했습니다: NO_PROXY에 등록 안 된 대역(예: DR 서브넷)은 오히려 정식
+    // 사내 프록시를 거치는 게 "인가된 경로"이고, 프록시를 강제로 우회하면 그 대역 트래픽이
+    // 인가 안 된 경로로 나가면서 별도 보안 게이트웨이(Skyhigh 등)에 막히는 경우가 있었습니다.
+    // 그래서 axios 기본 동작(HTTP_PROXY/HTTPS_PROXY/NO_PROXY 환경변수를 그대로 존중)으로
+    // 되돌립니다 - 이 판단은 결국 각 사내망의 NO_PROXY 설정을 신뢰하는 게 맞습니다.
+    // proxy 옵션을 아예 지정하지 않음 (axios 기본값 사용)
   });
 }
 

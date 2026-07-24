@@ -145,6 +145,12 @@
       <label>시드 문서 수 <input id="sampleSeedDocs" value="200" /></label>
       <label>배치 크기 <input id="sampleBatchSize" value="200" /></label>
       <label>doc_id offset <input id="sampleOffset" value="0" /></label>
+      <label>삽입 방식
+        <select id="sampleInsertMode">
+          <option value="bulk">_bulk (기본, 빠름)</option>
+          <option value="individual">개별 문서 요청 (느림, 사내 보안 게이트웨이가 _bulk 경로를 차단할 때)</option>
+        </select>
+      </label>
     </div>
     <details>
       <summary>고급: settings/mappings JSON 직접 입력 (비워두면 기본 rag-vectors 스펙 사용)</summary>

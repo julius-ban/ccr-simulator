@@ -680,6 +680,7 @@ function sampleIndexFormValues() {
     seedDocs: $('#sampleSeedDocs').value,
     batchSize: $('#sampleBatchSize').value,
     offset: $('#sampleOffset').value,
+    insertMode: $('#sampleInsertMode').value,
     customBody: $('#sampleCustomBody').value.trim() || undefined,
   };
 }

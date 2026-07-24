@@ -73,13 +73,14 @@ function buildDefaultIndexBody(dims, similarity) {
  * body: {
  *   clusterId, indexName(기본 rag-vectors), dims(기본 768), similarity(기본 cosine),
  *   seedDocs(기본 0), batchSize(기본 200), offset(기본 0),
+ *   insertMode('bulk'(기본)|'individual' - 사내 보안 게이트웨이가 _bulk 경로를 차단하는 경우 individual 선택),
  *   customBody (선택: 직접 붙여넣은 settings/mappings JSON 문자열 - 있으면 이걸 그대로 사용)
  * }
  */
 router.post('/sample-index', async (req, res) => {
   const {
     clusterId, indexName, dims, similarity,
-    seedDocs, batchSize, offset, customBody,
+    seedDocs, batchSize, offset, customBody, insertMode,
   } = req.body;
 
   const cluster = db.get('clusters').find({ id: clusterId }).value();
@@ -108,8 +109,41 @@ router.post('/sample-index', async (req, res) => {
   const seedCount = Number(seedDocs) || 0;
   const batch = Math.max(Number(batchSize) || 200, 1);
   const startOffset = Number(offset) || 0;
+  const mode = insertMode === 'individual' ? 'individual' : 'bulk';
 
-  if (createResult.ok && seedCount > 0) {
+  if (createResult.ok && seedCount > 0 && mode === 'individual') {
+    // _bulk 경로 자체를 차단하는 사내 보안 게이트웨이(예: Skyhigh/McAfee Web Gateway)를 우회하기 위해
+    // 문서를 한 건씩 PUT /{index}/_doc/{id}로 삽입합니다. 느리지만 _bulk를 아예 안 씀.
+    const CONCURRENCY = 10;
+    let inserted = 0;
+    let failedCount = 0;
+    let firstFailure = null;
+    for (let start = 0; start < seedCount; start += CONCURRENCY) {
+      const chunkSize = Math.min(CONCURRENCY, seedCount - start);
+      const results = await Promise.all(
+        Array.from({ length: chunkSize }, (_, i) => {
+          const idx = start + i;
+          const { chunkId, doc } = makeDocument(idx, startOffset, dimsNum);
+          return call(cluster, 'PUT', `/${idxName}/_doc/${encodeURIComponent(chunkId)}`, doc, {
+            label: `개별 문서 삽입 (${idx + 1}/${seedCount})`,
+          });
+        }),
+      );
+      results.forEach((r) => {
+        if (r.ok) inserted += 1;
+        else { failedCount += 1; if (!firstFailure) firstFailure = r; }
+      });
+      if (start === 0) {
+        // 개별 요청 200건을 로그에 다 남기면 너무 커지므로, 첫 배치의 대표 결과 1건만 예시로 남김
+        log.push({ step: 'seed_individual_sample', ...results[0], note: `개별 삽입 모드 — 대표로 첫 요청 1건만 표시 (총 ${seedCount}건 진행)` });
+      }
+    }
+    log.push({
+      step: 'seed_summary', mode: 'individual', totalRequested: seedCount,
+      totalInserted: inserted, totalFailed: failedCount,
+      firstFailure: firstFailure ? { status: firstFailure.status, response: firstFailure.response } : null,
+    });
+  } else if (createResult.ok && seedCount > 0) {
     let inserted = 0;
     let batchNum = 0;
     while (inserted < seedCount) {
@@ -129,10 +163,10 @@ router.post('/sample-index', async (req, res) => {
       if (!bulkResult.ok) break;
       inserted += thisBatchSize;
     }
-    log.push({ step: 'seed_summary', totalRequested: seedCount, totalInserted: inserted });
+    log.push({ step: 'seed_summary', mode: 'bulk', totalRequested: seedCount, totalInserted: inserted });
   }
 
-  addLog({ action: 'create_sample_index', clusterId, detail: { indexName: idxName, dims: dimsNum, seedCount } });
+  addLog({ action: 'create_sample_index', clusterId, detail: { indexName: idxName, dims: dimsNum, seedCount, mode } });
 
   res.json({ log });
 });
